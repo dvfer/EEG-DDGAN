@@ -5,7 +5,7 @@ from torch import Tensor
 import math
 import numpy as np
 
-from torchvision.transforms import Compose, Resize, ToTensor
+# from torchvision.transforms import Compose, Resize, ToTensor
 from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange, Reduce
 from torchsummary import summary
@@ -155,24 +155,25 @@ class Dis_TransformerEncoder(nn.Sequential):
         super().__init__(*[Dis_TransformerEncoderBlock(**kwargs) for _ in range(depth)])
 
 
-class ClassificationHead(nn.Sequential):
+class ClassificationHead(nn.Module):
     def __init__(self, emb_size=100, n_classes=2):
         super().__init__()
-        self.clshead = nn.Sequential(
-            Reduce('b n e -> b e', reduction='mean'),
-            nn.LayerNorm(emb_size),
-            nn.Linear(emb_size, n_classes)
-        )
+        self.reduce = Reduce('b n e -> b e', reduction='mean')
+        self.norm = nn.LayerNorm(emb_size)
+        self.linear = nn.Linear(emb_size, n_classes)
 
     def forward(self, x):
-        out = self.clshead(x)
-        return out
+        # x: (b, n, e)
+        x = self.reduce(x)
+        features = self.norm(x)
+        out = self.linear(features)
+        return out, features
 
 
 class PatchEmbedding_Linear(nn.Module):
     # what are the proper parameters set here?
     def __init__(self, in_channels=21, patch_size=16, emb_size=100, seq_length=1024):
-        # self.patch_size = patch_size
+        self.patch_size = patch_size
         super().__init__()
         # change the conv2d parameters here
         self.projection = nn.Sequential(
@@ -180,12 +181,18 @@ class PatchEmbedding_Linear(nn.Module):
             nn.Linear(patch_size * in_channels, emb_size)
         )
         self.cls_token = nn.Parameter(torch.randn(1, 1, emb_size))
-        self.positions = nn.Parameter(torch.randn((seq_length // patch_size) + 1, emb_size))
+        self.positions = nn.Parameter(torch.randn(((seq_length + patch_size - 1) // patch_size) + 1, emb_size))
 
     def forward(self, x: Tensor) -> Tensor:
         if x.dim() == 3:
             x = x.unsqueeze(2).permute(0, 3, 2, 1).contiguous()
         b, _, _, _ = x.shape
+        
+        # Pad if last dimension is not divisible by patch_size
+        if x.shape[-1] % self.patch_size != 0:
+            pad_len = self.patch_size - (x.shape[-1] % self.patch_size)
+            x = F.pad(x, (0, pad_len))
+            
         x = self.projection(x)
         cls_tokens = repeat(self.cls_token, '() n e -> b n e', b=b)
         # prepend the cls token to the input

@@ -2,7 +2,7 @@ import torch
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 
 from eeggan.nn_architecture.ae_networks import TransformerAutoencoder, TransformerDoubleAutoencoder
-from eeggan.nn_architecture.models import TTSGenerator, TTSDiscriminator, DecoderGenerator, EncoderDiscriminator
+from eeggan.nn_architecture.models import TTSGenerator, TTSDiscriminator, DecoderGenerator, EncoderDiscriminator, MultiscaleDWTDiscriminator
 
 
 gan_architectures = {
@@ -60,7 +60,7 @@ def init_gan(latent_dim_in,
         # initialize an autoencoder-GAN
 
         # initialize the autoencoder
-        ae_dict = torch.load(autoencoder, map_location=torch.device('cpu'))
+        ae_dict = torch.load(autoencoder, map_location=torch.device('cpu'), weights_only=False)
         if ae_dict['configuration']['target'] == 'channels':
             ae_dict['configuration']['target'] = TransformerAutoencoder.TARGET_CHANNELS
             autoencoder = TransformerAutoencoder(**ae_dict['configuration']).to(device)
@@ -81,8 +81,15 @@ def init_gan(latent_dim_in,
         autoencoder.eval()
         
         # adjust generator output_dim to match the output_dim of the autoencoder
-        n_channels = autoencoder.output_dim if autoencoder.target in [autoencoder.TARGET_CHANNELS, autoencoder.TARGET_BOTH] else autoencoder.output_dim_2
-        sequence_length_generated = autoencoder.output_dim_2 if autoencoder.target in [autoencoder.TARGET_CHANNELS, autoencoder.TARGET_BOTH] else autoencoder.output_dim
+        if autoencoder.target == 2: # TARGET_BOTH / FULL
+             n_channels = autoencoder.linear_dec_in_channels.weight.shape[1]
+             sequence_length_generated = autoencoder.model_1.linear_dec_in_timeseries.weight.shape[1]
+        elif autoencoder.target == 1: # TARGET_TIMESERIES
+             # n_channels = autoencoder.output_dim_2 # Do not overwrite n_channels for Time-series AE
+             sequence_length_generated = autoencoder.linear_dec_in.weight.shape[1]
+        else: # TARGET_CHANNELS
+             n_channels = autoencoder.linear_dec_in.weight.shape[1]
+             sequence_length_generated = autoencoder.output_dim_2
 
         # adjust discriminator input_dim to match the output_dim of the autoencoder
         channel_in_disc = n_channels + n_conditions
@@ -119,12 +126,44 @@ def init_gan(latent_dim_in,
             encoder=autoencoder
         )
 
-        if isinstance(generator, DecoderGenerator) and isinstance(discriminator, EncoderDiscriminator) and input_sequence_length == 0:
-            # if input_sequence_length is 0, do not decode the generator output during training
-            generator.decode_output(False)
-
         if isinstance(discriminator, EncoderDiscriminator) and isinstance(generator, DecoderGenerator) and input_sequence_length == 0:
             # if input_sequence_length is 0, do not encode the discriminator input during training
-            discriminator.encode_input(False)
+            # discriminator.encode_input(False)
+            pass
+
+    discriminator2 = None
+    secondary_feat_dim = 100 # Default fallback
+    if kwargs.get('use_multiscale_dwt_discriminator', False):
+        discriminator2 = MultiscaleDWTDiscriminator(
+            in_channels=channel_in_disc,
+            J=4,  # 4 levels of decomposition
+            n_classes=1,
+            seq_len=kwargs.get('sequence_length'),
+            include_high_freq=kwargs.get('multiscale_dwt_high_freq', False)
+        ).to(device)
+        # Calculation: (hidden_dim // 2) * J * num_streams
+        # hidden=64 -> 32 * 4 * (2 if high_freq else 1) = 128 or 256
+        hd = 64
+        j = 4
+        ns = 2 if kwargs.get('multiscale_dwt_high_freq', False) else 1
+        secondary_feat_dim = (hd // 2) * j * ns
+
+    # Wrap in StackingDiscriminator only if requested and D2 exists
+    if kwargs.get('use_stacking', False) and discriminator2 is not None:
+         from eeggan.nn_architecture.models import StackingDiscriminator
+         
+         # Calculate Primary Dimension
+         primary_dim = 50 
+         
+         discriminator = StackingDiscriminator(
+             primary_disc=discriminator,
+             secondary_disc=discriminator2,
+             primary_feat_dim=primary_dim,
+             secondary_feat_dim=secondary_feat_dim, 
+             hidden_dim=64
+         ).to(device)
+         
+         # If stacking, D2 is internal, so we don't return it separately
+         return generator, discriminator, None
             
-    return generator, discriminator
+    return generator, discriminator, discriminator2

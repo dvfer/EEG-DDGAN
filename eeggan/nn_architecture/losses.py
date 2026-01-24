@@ -99,6 +99,9 @@ class WassersteinGradientPenaltyLoss(WassersteinLoss):
 
         # calculate probability of interpolated examples
         prob_interpolated = discriminator(interpolated)
+        # Handle discriminators that return tuples (validity, features)
+        if isinstance(prob_interpolated, tuple):
+            prob_interpolated = prob_interpolated[0]
         
         fake = torch.ones((real_images.shape[0], 1), requires_grad=False).to(real_images.device)
 

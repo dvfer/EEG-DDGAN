@@ -33,14 +33,19 @@ class GANDDPTrainer(trainer.GANTrainer):
             super().save_checkpoint(path_checkpoint, samples, generator=self.generator.module, discriminator=self.discriminator.module, update_history=update_history)
         # dist.barrier()
 
-    def print_log(self, current_epoch, d_loss, g_loss):
+    def print_log(self, current_epoch, d_loss, g_loss, d2_loss=None):
         # if self.rank == 0:
         # average the loss across all processes before printing
-        reduce_tensor = torch.tensor([d_loss, g_loss], dtype=torch.float32, device=self.device)
-        dist.all_reduce(reduce_tensor, op=dist.ReduceOp.SUM)
-        reduce_tensor /= self.world_size
-
-        super().print_log(current_epoch, reduce_tensor[0], reduce_tensor[1])
+        if d2_loss is not None:
+             reduce_tensor = torch.tensor([d_loss, g_loss, d2_loss], dtype=torch.float32, device=self.device)
+             dist.all_reduce(reduce_tensor, op=dist.ReduceOp.SUM)
+             reduce_tensor /= self.world_size
+             super().print_log(current_epoch, reduce_tensor[0], reduce_tensor[1], reduce_tensor[2])
+        else:
+             reduce_tensor = torch.tensor([d_loss, g_loss], dtype=torch.float32, device=self.device)
+             dist.all_reduce(reduce_tensor, op=dist.ReduceOp.SUM)
+             reduce_tensor /= self.world_size
+             super().print_log(current_epoch, reduce_tensor[0], reduce_tensor[1])
 
     def manage_checkpoints(self, path_checkpoint: str, checkpoint_files: list, generator=None, discriminator=None, samples=None, update_history=False):
         if self.rank == 0:

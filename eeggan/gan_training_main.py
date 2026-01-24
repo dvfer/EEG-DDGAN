@@ -7,8 +7,14 @@ import torch
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 
+try:
+    torch.backends.cuda.enable_flash_sdpa(False)
+    torch.backends.cuda.enable_mem_efficient_sdpa(False)
+except AttributeError:
+    pass
+
 # add root directory to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)))
 from eeggan.helpers.trainer import GANTrainer
 from eeggan.helpers.get_master import find_free_port
 from eeggan.helpers.ddp_training import run, GANDDPTrainer
@@ -92,6 +98,13 @@ def main(args=None):
         'norm_data': norm_data,
         'std_data': std_data,
         'diff_data': diff_data,
+        'use_dwt_discriminator': default_args.get('use_dwt_discriminator', False),
+        'use_scattering_discriminator': default_args.get('use_scattering_discriminator', False),
+        'use_spectrogram_discriminator': default_args.get('use_spectrogram_discriminator', False),
+
+        'use_stacking': default_args.get('use_stacking', False), # Added --use_stacking argument
+        'use_multiscale_dwt_discriminator': default_args.get('use_multiscale_dwt_discriminator', False),
+        'multiscale_dwt_high_freq': default_args.get('multiscale_dwt_high_freq', False),
         'seed': default_args['seed'],
         'save_name': default_args['save_name'],
         'history': None,
@@ -120,7 +133,7 @@ def main(args=None):
     opt['sequence_length'] = dataset.shape[1] - dataloader.labels.shape[1]
     opt['n_samples'] = dataset.shape[0]
 
-    ae_dict = torch.load(opt['autoencoder'], map_location=torch.device('cpu')) if opt['autoencoder'] != '' else []
+    ae_dict = torch.load(opt['autoencoder'], map_location=torch.device('cpu'), weights_only=False) if opt['autoencoder'] != '' else []
     # check if generated sequence is a multiple of patch size   
     encoded_sequence = False
     def pad_warning(sequence_length, encoded_sequence=False):
@@ -147,7 +160,7 @@ def main(args=None):
     # Initialize generator, discriminator and trainer
     # --------------------------------------------------------------------------------
     
-    generator, discriminator = init_gan(**opt)
+    generator, discriminator, discriminator2 = init_gan(**opt)
     print("Generator and discriminator initialized.")
 
     # --------------------------------------------------------------------------------
@@ -191,11 +204,19 @@ def main(args=None):
         print("GAN training finished.")
         
     else:
-        trainer = GANTrainer(generator, discriminator, opt)
+        trainer = GANTrainer(generator, discriminator, opt, discriminator2=discriminator2)
         if default_args['checkpoint'] != '':
             trainer.load_checkpoint(default_args['checkpoint'])
         dataset = DataLoader(dataset, batch_size=trainer.batch_size, shuffle=True, pin_memory=True)
-        gen_samples = trainer.training(dataset)
+        try:
+            from torch.nn.attention import sdpa_kernel, SDPBackend
+            cm = sdpa_kernel([SDPBackend.MATH])
+        except ImportError:
+            # Fallback for older torch versions
+            cm = torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False)
+
+        with cm:
+            gen_samples = trainer.training(dataset)
 
         # save final models, optimizer states, generated samples, losses and configuration as final result
         path = 'trained_models'

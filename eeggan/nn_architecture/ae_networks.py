@@ -212,7 +212,9 @@ class TransformerDoubleAutoencoder(Autoencoder):
     def decode(self, x):
         if self.training_level == 1:
 
+            
             x = x.permute(0, 2, 1)
+            # print(f"DEBUG: decode input permuted shape: {x.shape}")
             x = self.linear_dec_in_timeseries(x)
             x = self.decoder_timeseries(x)
             x = self.linear_dec_out_timeseries(x)

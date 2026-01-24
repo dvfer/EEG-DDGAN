@@ -274,6 +274,13 @@ def default_inputs_training_gan():
         'kw_time': [str, 'Keyword to detect the time steps of the dataset; e.g. if [Time1, Time2, ...] -> use Time', 'Time', 'Time label: '],
         'kw_channel': [str, 'Keyword to detect used channels', '', 'Channel label: '],
         'save_name': [str, 'Name to save model', '', 'Model save name: '],
+        'use_dwt_discriminator': [bool, 'Use DWT1D Discriminator', False, 'Using DWT1D Discriminator'],
+        'use_scattering_discriminator': [bool, 'Use Scattering Discriminator', False, 'Using Scattering Discriminator'],
+        'use_spectrogram_discriminator': [bool, 'Use Spectrogram Discriminator', False, 'Using Spectrogram Discriminator'],
+
+        'use_multiscale_dwt_discriminator': [bool, 'Use Multiscale DWT Discriminator (low-freq focus)', False, 'Using Multiscale DWT Discriminator'],
+        'multiscale_dwt_high_freq': [bool, 'Include high-frequency coefficients in Multiscale DWT', False, 'Including high-freq coefficients'],
+        'use_stacking': [bool, 'Use Meta-Learner Stacking Discriminator', False, 'Using Stacking Discriminator'],
     }
 
     return kw_dict

@@ -41,7 +41,7 @@ class GANTrainer(Trainer):
     """Trainer for conditional Wasserstein-GAN with gradient penalty.
     Source: https://arxiv.org/pdf/1704.00028.pdf"""
 
-    def __init__(self, generator, discriminator, opt):
+    def __init__(self, generator, discriminator, opt, discriminator2=None):
         # training configuration
         super().__init__()
         self.device = opt['device'] if 'device' in opt else 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -59,9 +59,11 @@ class GANTrainer(Trainer):
         self.n_conditions = opt['n_conditions'] if 'n_conditions' in opt else 0
         self.n_channels = opt['n_channels'] if 'n_channels' in opt else 1
         self.channel_names = opt['channel_names'] if 'channel_names' in opt else list(range(0, self.n_channels))
-        self.b1, self.b2 = 0, 0.9  # alternative values: .5, 0.999
+        self.b1, self.b2 = 0.0, 0.9  # alternative values: .5, 0.999
         self.rank = 0  # Device: cuda:0, cuda:1, ... --> Device: cuda:rank
         self.start_time = time.time()
+
+
 
         self.generator = generator
         self.discriminator = discriminator
@@ -71,27 +73,36 @@ class GANTrainer(Trainer):
 
         self.generator.to(self.device)
         self.discriminator.to(self.device)
+        self.discriminator2 = discriminator2
+        if self.discriminator2:
+            self.discriminator2.to(self.device)
 
         self.generator_optimizer = torch.optim.Adam(self.generator.parameters(),
                                                     lr=self.g_lr, betas=(self.b1, self.b2))
         self.discriminator_optimizer = torch.optim.Adam(self.discriminator.parameters(),
                                                 lr=self.d_lr, betas=(self.b1, self.b2))
+        if self.discriminator2:
+            self.discriminator2_optimizer = torch.optim.Adam(self.discriminator2.parameters(),
+                                                    lr=self.d_lr, betas=(self.b1, self.b2))
 
         self.loss = Loss()
         if isinstance(self.loss, losses.WassersteinGradientPenaltyLoss):
             self.loss.set_lambda_gp(self.lambda_gp)
 
         self.d_losses = []
+        self.d2_losses = []
         self.g_losses = []
         self.trained_epochs = 0
 
         self.prev_g_loss = 0
         generator_class = str(self.generator.__class__.__name__) if not isinstance(self.generator, DecoderGenerator) else str(self.generator.generator.__class__.__name__)
         discriminator_class = str(self.discriminator.__class__.__name__) if not isinstance(self.discriminator, EncoderDiscriminator) else str(self.discriminator.discriminator.__class__.__name__)
+        discriminator2_class = str(self.discriminator2.__class__.__name__) if self.discriminator2 else None
         self.configuration = {
             'device': self.device,
             'generator_class': generator_class,
             'discriminator_class': discriminator_class,
+            'discriminator2_class': discriminator2_class,
             'model_class': 'GAN',
             'sequence_length': self.sequence_length,
             'sequence_length_generated': self.sequence_length_generated,
@@ -152,6 +163,7 @@ class GANTrainer(Trainer):
                 i_batch = 0
                 d_loss_batch = 0
                 g_loss_batch = 0
+                d2_loss_batch = 0
                 for batch in dataset:
                     # draw batch_size samples from sessions
                     data = batch[:, self.n_conditions:].to(self.device)
@@ -163,13 +175,19 @@ class GANTrainer(Trainer):
                     else:
                         train_generator = False
 
-                    d_loss, g_loss, gen_samples_batch = self.batch_train(data, data_labels, train_generator)
+                    if self.discriminator2:
+                         d_loss, g_loss, gen_samples_batch, d2_loss = self.batch_train(data, data_labels, train_generator)
+                         d2_loss_batch += d2_loss
+                    else:
+                         d_loss, g_loss, gen_samples_batch, _ = self.batch_train(data, data_labels, train_generator)
 
                     d_loss_batch += d_loss
                     g_loss_batch += g_loss
                     i_batch += 1
                 self.d_losses.append(d_loss_batch/i_batch)
                 self.g_losses.append(g_loss_batch/i_batch)
+                if self.discriminator2:
+                     self.d2_losses.append(d2_loss_batch/i_batch)
 
                 # Save a checkpoint of the trained GAN and the generated samples every sample interval
                 if epoch % self.sample_interval == 0:
@@ -184,7 +202,21 @@ class GANTrainer(Trainer):
                         trigger_checkpoint_01 = True
 
                 self.trained_epochs += 1
-                loop.set_postfix_str(f"D LOSS: {np.round(d_loss_batch/i_batch,6)}, G LOSS: {np.round(g_loss_batch/i_batch,6)}")
+                if self.discriminator2:
+                    postfix_dict = {
+                        "D": np.round(d_loss_batch/i_batch, 6),
+                        "D2": np.round(d2_loss_batch/i_batch, 6),
+                        "G": np.round(g_loss_batch/i_batch, 6)
+                    }
+                    # Check if we have fm_loss tracked (I need to track it first)
+                    # Currently I am not tracking fm_loss separately in a list.
+                    # I should probably just leave it as part of G loss for now to avoid clutter, 
+                    # OR simply print it if I track it.
+                    # For minimal changes let's just keep D, D2, G.
+                    # Use standard log line.
+                    loop.set_postfix_str(f"D: {np.round(d_loss_batch/i_batch,6)}, D2: {np.round(d2_loss_batch/i_batch,6)}, G: {np.round(g_loss_batch/i_batch,6)}")
+                else:
+                    loop.set_postfix_str(f"D: {np.round(d_loss_batch/i_batch,6)}, G: {np.round(g_loss_batch/i_batch,6)}")
         except KeyboardInterrupt:
             # save model at KeyboardInterrupt
             print("Keyboard interrupt detected.\nCancel training and continue with further operations.")
@@ -229,7 +261,6 @@ class GANTrainer(Trainer):
         #  Train Generator
         # -----------------
         if train_generator:
-
             # enable training mode for generator; disable training mode for discriminator + freeze discriminator weights
             self.generator.train()
             self.discriminator.eval()
@@ -249,13 +280,136 @@ class GANTrainer(Trainer):
                 fake_data = self.make_fake_data(gen_imgs, data_labels, gen_cond_data)
 
             # Compute loss/validity of generated data and update generator
-            validity = self.discriminator(fake_data)
+            # Determine if we have StackingDiscriminator
+            is_stacking = hasattr(self.discriminator, 'secondary') or hasattr(self.discriminator, 'module') and hasattr(self.discriminator.module, 'secondary')
+            
+            gen_imgs_decoded = gen_imgs 
+            
+            if is_stacking:
+                 
+                 # If Generator outputs latent, we need to decode for raw
+                 fake_data_raw = None
+            if is_stacking:
+                 # DecoderGenerator already output raw data (gen_imgs)
+                 # So fake_data is already raw + labels
+                 fake_data_raw = fake_data
+                 validity_output = self.discriminator(fake_data, fake_data_raw)
+                 
+            else:
+                 validity_output = self.discriminator(fake_data)
+            
+            # Unpack validity and features
+            features_fake_d1 = None
+            features_fake_d2 = None
+            
+            if isinstance(validity_output, tuple):
+                 validity, features_fake = validity_output
+                 if is_stacking and isinstance(features_fake, tuple):
+                      features_fake_d1, features_fake_d2 = features_fake
+                 else:
+                      features_fake_d1 = features_fake 
+            else:
+                 validity = validity_output
+                 features_fake = None
+
             g_loss = self.loss.generator(validity)
+            
+            # Feature Matching (Stacking or Standard D1)
+            if features_fake_d1 is not None or features_fake_d2 is not None:
+                with torch.no_grad():
+
+                     real_d1_input = None
+                     real_d1_raw = self.make_fake_data(data, data_labels, gen_cond_data_orig if gen_cond_data_orig is not None else gen_cond_data)
+                     
+                     primary_discriminator = self.discriminator.primary if is_stacking else self.discriminator
+                          
+                     # Check if Primary is EncoderDiscriminator
+                     if isinstance(primary_discriminator, EncoderDiscriminator) and not primary_discriminator.encode: 
+
+                          real_data_encoded = primary_discriminator.encoder.encode(data)
+                          real_d1_input = self.make_fake_data(real_data_encoded, data_labels)
+                     else:
+             
+                          real_d1_input = real_d1_raw
+
+                     # Get Real Features
+                     if is_stacking:
+                          out_real = self.discriminator(real_d1_input, real_d1_raw)
+                     else:
+                          out_real = self.discriminator(real_d1_input)
+                          
+                     # Unpack Real Features
+                     feats_real_d1 = None
+                     feats_real_d2 = None
+                     if isinstance(out_real, tuple):
+                          _, feats_real_tuple = out_real
+                          if is_stacking and isinstance(feats_real_tuple, tuple):
+                               feats_real_d1, feats_real_d2 = feats_real_tuple
+                          else:
+                               feats_real_d1 = feats_real_tuple
+                     
+                     lambda_fm = 20
+                     
+                     if features_fake_d2 is not None and feats_real_d2 is not None:
+                          g_loss += lambda_fm * torch.nn.functional.l1_loss(features_fake_d2, feats_real_d2)
+            
+
+            if self.discriminator2 and not is_stacking:
+                 # Decode generated latent to raw
+    
+                 gen_imgs_decoded = gen_imgs
+                 
+                 if gen_cond_data_orig is not None:
+                     fake_data_raw = self.make_fake_data(gen_imgs_decoded, data_labels, gen_cond_data_orig)
+                 else:
+
+                     fake_data_raw = self.make_fake_data(gen_imgs_decoded, data_labels, gen_cond_data if gen_cond_data_orig is None else gen_cond_data_orig)
+                 
+                 out2 = self.discriminator2(fake_data_raw)
+                 if isinstance(out2, tuple):
+                     validity2, features_fake = out2
+                     
+                     # Feature Matching
+                     real_data_input = self.make_fake_data(data, data_labels, gen_cond_data_orig if gen_cond_data_orig is not None else gen_cond_data)
+                     
+                     with torch.no_grad():
+                         out2_real = self.discriminator2(real_data_input)
+                         if isinstance(out2_real, tuple):
+                             _, features_real = out2_real
+                         else:
+                             features_real = None 
+                     
+                     if features_real is not None:
+                         # L1 Feature Matching Loss
+                         fm_loss = torch.nn.functional.l1_loss(features_fake, features_real)
+                         lambda_fm = 20
+                         g_loss2 = self.loss.generator(validity2) + lambda_fm * fm_loss
+                     else:
+                         g_loss2 = self.loss.generator(validity2)
+                 else:
+                     validity2 = out2
+                     g_loss2 = self.loss.generator(validity2)
+                 
+                 g_loss = (g_loss + g_loss2) / 2
+
+
+
+            if torch.isnan(g_loss):
+                 print(f"G Loss is NaN! Breakdown:")
+                 print(f"  Validity D1: {self.loss.generator(validity).item()}")
+                 if self.discriminator2:
+                      print(f"  Validity D2: {self.loss.generator(validity2).item()}")
+                      if 'fm_loss' in locals():
+                           print(f"  FM Loss: {fm_loss.item()}")
+
+
             self.generator_optimizer.zero_grad()
             g_loss.backward()
             self.generator_optimizer.step()
 
-            g_loss = g_loss.item()
+            g_loss = g_loss if not isinstance(g_loss, float) else g_loss
+            if isinstance(g_loss, torch.Tensor):
+                g_loss = g_loss.item()
             self.prev_g_loss = g_loss
         else:
             g_loss = self.prev_g_loss
@@ -321,8 +475,76 @@ class GANTrainer(Trainer):
         # Loss for real and generated samples
         real_data.requires_grad = True
         fake_data.requires_grad = True
-        validity_fake = self.discriminator(fake_data)
-        validity_real = self.discriminator(real_data)
+        
+        # Loss for real and generated samples
+        real_data.requires_grad = True
+        fake_data.requires_grad = True
+        
+        # Real Data Pass
+
+        
+        # Determine if we have StackingDiscriminator
+        is_stacking = hasattr(self.discriminator, 'secondary') or hasattr(self.discriminator, 'module') and hasattr(self.discriminator.module, 'secondary')
+        
+        if is_stacking:
+        
+             gen_cond_data_for_raw = gen_cond_data_orig if gen_cond_data_orig is not None else gen_cond_data
+             real_data_raw = self.make_fake_data(data, disc_labels, gen_cond_data_for_raw)
+             real_data_raw.requires_grad = True
+             
+             fake_data_raw = self.make_fake_data(gen_imgs, disc_labels, gen_cond_data_for_raw)
+             fake_data_raw.requires_grad = True
+             
+             validity_real_out = self.discriminator(real_data, real_data_raw)
+             validity_fake_out = self.discriminator(fake_data, fake_data_raw)
+        else:
+             validity_real_out = self.discriminator(real_data)
+             validity_fake_out = self.discriminator(fake_data)
+
+        # Unpack Outputs
+        if isinstance(validity_real_out, tuple):
+             validity_real = validity_real_out[0]
+             # validity_real_out[1] are features, ignored for D loss (usually)
+        else:
+             validity_real = validity_real_out
+
+        if isinstance(validity_fake_out, tuple):
+             validity_fake = validity_fake_out[0]
+        else:
+             validity_fake = validity_fake_out
+        
+        # Discriminator 2 (Legacy / Non-Stacking)
+        d2_loss = 0
+        if self.discriminator2:
+         
+             real_data_raw = self.make_fake_data(data, disc_labels, gen_cond_data_orig if gen_cond_data_orig is not None else gen_cond_data)
+             real_data_raw.requires_grad = True
+
+             gen_imgs_decoded = gen_imgs
+             fake_data_raw = self.make_fake_data(gen_imgs_decoded, disc_labels, gen_cond_data_orig if gen_cond_data_orig is not None else gen_cond_data)
+             
+             fake_data_raw.requires_grad = True
+             
+             validity_fake2 = self.discriminator2(fake_data_raw)
+             if isinstance(validity_fake2, tuple):
+                 validity_fake2 = validity_fake2[0]
+             
+             if torch.isnan(real_data_raw).any():
+                  print("real_data_raw has NaNs in trainer.py (D2 update)")
+             
+             validity_real2 = self.discriminator2(real_data_raw)
+             if isinstance(validity_real2, tuple):
+                 validity_real2 = validity_real2[0]
+             
+             if isinstance(self.loss, losses.WassersteinGradientPenaltyLoss):
+            
+                 d2_loss = self.loss.discriminator(validity_real2, validity_fake2, self.discriminator2, real_data_raw, fake_data_raw)
+             else:
+                 d2_loss = self.loss.discriminator(validity_real2, validity_fake2)
+             
+             self.discriminator2_optimizer.zero_grad()
+             d2_loss.backward()
+             self.discriminator2_optimizer.step()
 
         # Total discriminator loss and update
         if isinstance(self.loss, losses.WassersteinGradientPenaltyLoss):
@@ -333,15 +555,19 @@ class GANTrainer(Trainer):
         d_loss.backward()
         self.discriminator_optimizer.step()
 
-        return d_loss.item(), g_loss, gen_samples
+        if isinstance(d2_loss, torch.Tensor):
+             d2_loss = d2_loss.item()
+        return d_loss.item(), g_loss, gen_samples, d2_loss
 
-    def save_checkpoint(self, path_checkpoint=None, samples=None, generator=None, discriminator=None, update_history=False):
+    def save_checkpoint(self, path_checkpoint=None, samples=None, generator=None, discriminator=None, discriminator2=None, update_history=False):
         if path_checkpoint is None:
             path_checkpoint = 'trained_models'+os.path.sep+'checkpoint.pt'
         if generator is None:
             generator = self.generator
         if discriminator is None:
             discriminator = self.discriminator
+        if discriminator2 is None:
+            discriminator2 = self.discriminator2
 
         if update_history:
             self.configuration['trained_epochs'] = self.trained_epochs
@@ -359,6 +585,11 @@ class GANTrainer(Trainer):
             'trained_epochs': self.trained_epochs,
             'configuration': self.configuration,
         }
+        if discriminator2:
+            state_dict['discriminator2'] = discriminator2.state_dict()
+            state_dict['discriminator2_optimizer'] = self.discriminator2_optimizer.state_dict()
+            state_dict['discriminator2_loss'] = self.d2_losses
+
         torch.save(state_dict, path_checkpoint)
 
         if update_history:
@@ -373,29 +604,39 @@ class GANTrainer(Trainer):
             self.discriminator.load_state_dict(state_dict['discriminator'])
             self.generator_optimizer.load_state_dict(state_dict['generator_optimizer'])
             self.discriminator_optimizer.load_state_dict(state_dict['discriminator_optimizer'])
+            if self.discriminator2 and 'discriminator2' in state_dict:
+                self.discriminator2.load_state_dict(state_dict['discriminator2'])
+                self.discriminator2_optimizer.load_state_dict(state_dict['discriminator2_optimizer'])
             print(f"Device {self.device}:{self.rank}: Using pretrained GAN.")
         else:
             Warning("No checkpoint-file found. Using random initialization.")
 
-    def manage_checkpoints(self, path_checkpoint: str, checkpoint_files: list, generator=None, discriminator=None, samples=None, update_history=False):
+    def manage_checkpoints(self, path_checkpoint: str, checkpoint_files: list, generator=None, discriminator=None, discriminator2=None, samples=None, update_history=False):
         """if training was successful delete the sub-checkpoint files and save the most current state as checkpoint,
         but without generated samples to keep memory usage low. Checkpoint should be used for further training only.
         Therefore, there's no need for the saved samples."""
 
         print("Managing checkpoints...")
         # save current model as checkpoint.pt
-        self.save_checkpoint(path_checkpoint=os.path.join(path_checkpoint, 'checkpoint.pt'), generator=generator, discriminator=discriminator, samples=samples, update_history=update_history)
+        self.save_checkpoint(path_checkpoint=os.path.join(path_checkpoint, 'checkpoint.pt'), generator=generator, discriminator=discriminator, discriminator2=discriminator2, samples=samples, update_history=update_history)
 
         for f in checkpoint_files:
             if os.path.exists(os.path.join(path_checkpoint, f)):
                 os.remove(os.path.join(path_checkpoint, f))
 
-    def print_log(self, current_epoch, d_loss, g_loss):
-        print(
-            "[Epoch %d/%d] [D loss: %f] [G loss: %f]"
-            % (current_epoch, self.epochs,
-               d_loss, g_loss)
-        )
+    def print_log(self, current_epoch, d_loss, g_loss, d2_loss=None):
+        if d2_loss is not None:
+             print(
+                "[Epoch %d/%d] [D loss: %f] [D2 loss: %f] [G loss: %f]"
+                % (current_epoch, self.epochs,
+                   d_loss, d2_loss, g_loss)
+            )
+        else:
+            print(
+                "[Epoch %d/%d] [D loss: %f] [G loss: %f]"
+                % (current_epoch, self.epochs,
+                   d_loss, g_loss)
+            )
 
     def set_optimizer_state(self, optimizer, g_or_d='G'):
         if g_or_d == 'G':
