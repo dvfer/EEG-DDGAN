@@ -153,7 +153,10 @@ def init_gan(latent_dim_in,
          from eeggan.nn_architecture.models import StackingDiscriminator
          
          # Calculate Primary Dimension
-         primary_dim = 50 
+         # TODO (future): derive dynamically from discriminator.[-1].linear.in_features
+         # once emb_size becomes a configurable hyperparameter. Currently fixed at 50
+         # because TTSDiscriminator is always built with emb_size=50 (see gan_architectures).
+         primary_dim = 50
          
          discriminator = StackingDiscriminator(
              primary_disc=discriminator,

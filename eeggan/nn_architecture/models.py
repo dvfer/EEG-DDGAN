@@ -173,15 +173,13 @@ class MultiscaleDWTDiscriminator(nn.Module):
         )
         
     def forward(self, x):
-        # x shape: (B, L, C) or (B, C, L) or (B, C, 1, L) from GP loss
-        
         if x.dim() == 4:
+            # Gradient penalty path sends (B, C, 1, L) — already (B, C, L) after squeeze
             if x.shape[2] == 1:
                 x = x.squeeze(2)
-        
-        # For DWT1D, we need (N, C, L)
-        if x.shape[-1] == self.in_channels:
-             x = x.permute(0, 2, 1)
+        elif x.dim() == 3:
+            # Trainer path sends (B, L, C) via make_fake_data — permute to (B, C, L)
+            x = x.permute(0, 2, 1).contiguous()
         
         batch_size = x.shape[0]
         
