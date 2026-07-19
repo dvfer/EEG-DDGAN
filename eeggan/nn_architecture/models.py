@@ -180,7 +180,14 @@ class MultiscaleDWTDiscriminator(nn.Module):
         elif x.dim() == 3:
             # Trainer path sends (B, L, C) via make_fake_data — permute to (B, C, L)
             x = x.permute(0, 2, 1).contiguous()
-        
+
+        # ttsgan-native-multichannel: catch a wrong-axis permute early with a clear message,
+        # rather than a confusing nn.Linear in_features mismatch deep in scale_heads_low/high.
+        assert x.shape[1] == self.in_channels, (
+            f"MultiscaleDWTDiscriminator expected channel dim {self.in_channels} at axis 1, "
+            f"got shape {tuple(x.shape)}."
+        )
+
         batch_size = x.shape[0]
         
         # Process each scale level progressively
@@ -208,7 +215,12 @@ class MultiscaleDWTDiscriminator(nn.Module):
         
         # Concatenate all scale features
         combined_features = torch.cat(scale_features, dim=1)
-        
+        expected_combined_dim = (self.final_head[0].in_features)
+        assert combined_features.shape[1] == expected_combined_dim, (
+            f"MultiscaleDWTDiscriminator combined_features has dim {combined_features.shape[1]}, "
+            f"expected {expected_combined_dim} (hidden_dim/2 * J * num_streams)."
+        )
+
         # Final prediction
         validity = self.final_head(combined_features)
         

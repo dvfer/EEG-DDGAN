@@ -1,8 +1,4 @@
-import torch
-from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
-
-from eeggan.nn_architecture.ae_networks import TransformerAutoencoder, TransformerDoubleAutoencoder
-from eeggan.nn_architecture.models import TTSGenerator, TTSDiscriminator, DecoderGenerator, EncoderDiscriminator, MultiscaleDWTDiscriminator
+from eeggan.nn_architecture.models import TTSGenerator, TTSDiscriminator, MultiscaleDWTDiscriminator
 
 
 gan_architectures = {
@@ -15,121 +11,56 @@ gan_types = {
     }
 
 
-def init_gan(latent_dim_in, 
-             channel_in_disc, 
-             n_channels, 
+def init_gan(latent_dim_in,
+             channel_in_disc,
+             n_channels,
              n_conditions,
              device,
              sequence_length_generated=-1,
-             hidden_dim=128, 
-             num_layers=2, 
-             activation='tanh', 
-             input_sequence_length=0, 
-             patch_size=-1, 
-             autoencoder='',
+             hidden_dim=128,
+             num_layers=2,
+             activation='tanh',
+             input_sequence_length=0,
+             patch_size=-1,
              **kwargs,
              ):
-    if autoencoder == '':
-        # no autoencoder defined -> use transformer GAN
-        generator = gan_architectures[gan_types['tts'][0]](
-            latent_dim=latent_dim_in,
-            channels=n_channels,
-            seq_len=sequence_length_generated,
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            dropout=0.1,
-            activation=activation,
-            num_heads=4,
+    # ttsgan-direct pipeline: always build a plain TTSGenerator/TTSDiscriminator pair.
+    # No autoencoder-wrapped DecoderGenerator/EncoderDiscriminator path -- that branch
+    # was removed here (see openspec/changes/ttsgan-native-multichannel); it remains
+    # available on main for anyone using autoencoder-coupled GAN training.
+    assert channel_in_disc == n_channels + n_conditions, (
+        f"channel_in_disc ({channel_in_disc}) must equal n_channels + n_conditions "
+        f"({n_channels} + {n_conditions} = {n_channels + n_conditions})."
+    )
 
-            # additional TTSGenerator inputs: patch_size
-            patch_size=patch_size,
-        )
+    generator = gan_architectures[gan_types['tts'][0]](
+        latent_dim=latent_dim_in,
+        channels=n_channels,
+        seq_len=sequence_length_generated,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=0.1,
+        activation=activation,
+        num_heads=4,
 
-        discriminator = gan_architectures[gan_types['tts'][1]](
-            channels=channel_in_disc,
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            dropout=0.1,
-            seq_len=sequence_length_generated,
-            num_heads=4,
+        # additional TTSGenerator inputs: patch_size
+        patch_size=patch_size,
+    )
+    assert generator.channels == n_channels, (
+        f"Generator was built with {generator.channels} output channels, expected n_channels={n_channels}."
+    )
 
-            # additional TTSDiscriminator inputs: patch_size
-            patch_size=patch_size,
-        )
-    else:
-        # initialize an autoencoder-GAN
+    discriminator = gan_architectures[gan_types['tts'][1]](
+        channels=channel_in_disc,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        dropout=0.1,
+        seq_len=sequence_length_generated,
+        num_heads=4,
 
-        # initialize the autoencoder
-        ae_dict = torch.load(autoencoder, map_location=torch.device('cpu'), weights_only=False)
-        if ae_dict['configuration']['target'] == 'channels':
-            ae_dict['configuration']['target'] = TransformerAutoencoder.TARGET_CHANNELS
-            autoencoder = TransformerAutoencoder(**ae_dict['configuration']).to(device)
-        elif ae_dict['configuration']['target'] == 'time':
-            ae_dict['configuration']['target'] = TransformerAutoencoder.TARGET_TIMESERIES
-            autoencoder = TransformerAutoencoder(**ae_dict['configuration']).to(device)
-        elif ae_dict['configuration']['target'] == 'full':
-            autoencoder = TransformerDoubleAutoencoder(**ae_dict['configuration'], training_level=2).to(device)
-            autoencoder.model_1 = TransformerDoubleAutoencoder(**ae_dict['configuration'], training_level=1).to(device)
-            autoencoder.model_1.eval()
-        else:
-            raise ValueError(f"Autoencoder class {ae_dict['configuration']['model_class']} not recognized.")
-        consume_prefix_in_state_dict_if_present(ae_dict['model'], 'module.')
-        autoencoder.load_state_dict(ae_dict['model'])
-        # freeze the autoencoder
-        for param in autoencoder.parameters():
-            param.requires_grad = False
-        autoencoder.eval()
-        
-        # adjust generator output_dim to match the output_dim of the autoencoder
-        if autoencoder.target == 2: # TARGET_BOTH / FULL
-             n_channels = autoencoder.linear_dec_in_channels.weight.shape[1]
-             sequence_length_generated = autoencoder.model_1.linear_dec_in_timeseries.weight.shape[1]
-        elif autoencoder.target == 1: # TARGET_TIMESERIES
-             # n_channels = autoencoder.output_dim_2 # Do not overwrite n_channels for Time-series AE
-             sequence_length_generated = autoencoder.linear_dec_in.weight.shape[1]
-        else: # TARGET_CHANNELS
-             n_channels = autoencoder.linear_dec_in.weight.shape[1]
-             sequence_length_generated = autoencoder.output_dim_2
-
-        # adjust discriminator input_dim to match the output_dim of the autoencoder
-        channel_in_disc = n_channels + n_conditions
-
-        generator = DecoderGenerator(
-            generator=gan_architectures[gan_types['tts'][0]](
-                latent_dim=latent_dim_in,
-                channels=n_channels,
-                seq_len=sequence_length_generated,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                dropout=0.1,
-                activation=activation,
-                num_heads=4,
-
-                # additional TTSGenerator inputs: patch_size
-                patch_size=patch_size,
-            ),
-            decoder=autoencoder
-        )
-
-        discriminator = EncoderDiscriminator(
-            discriminator=gan_architectures[gan_types['tts'][1]](
-                channels=channel_in_disc,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                dropout=0.1,
-                seq_len=sequence_length_generated,
-                num_heads=4,
-
-                # additional TTSDiscriminator inputs: patch_size
-                patch_size=patch_size,
-            ),
-            encoder=autoencoder
-        )
-
-        if isinstance(discriminator, EncoderDiscriminator) and isinstance(generator, DecoderGenerator) and input_sequence_length == 0:
-            # if input_sequence_length is 0, do not encode the discriminator input during training
-            # discriminator.encode_input(False)
-            pass
+        # additional TTSDiscriminator inputs: patch_size
+        patch_size=patch_size,
+    )
 
     discriminator2 = None
     secondary_feat_dim = 100 # Default fallback

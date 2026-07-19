@@ -1,7 +1,13 @@
-"""Pipeline: BNCI2014_009 (P300) → CSV multi-canal → Autoencoder → GAN
+"""Pipeline: BNCI2014_009 (P300) → CSV multi-canal → GAN (ttsgan-direct)
 
 Reemplaza los bucles bash de entrenamiento. Llama directamente a las
 funciones Python de eeggan sin subprocesses.
+
+Nota (rama ttsgan-direct): esta rama entrena la GAN directamente sobre los
+datos multicanal en crudo, sin el paso de autoencoder que usaba `main`
+(ver openspec/changes/ttsgan-native-multichannel). `patch_size` debe ser
+divisor de la longitud de secuencia cruda del dataset (ya no de `time_out`
+del AE) — `gan_training_main.py` lanza un `ValueError` claro si no lo es.
 
 Uso:
     python moabb_pipeline.py
@@ -29,17 +35,10 @@ NORM = False
 
 # Directorios de salida
 DATA_DIR = 'subject_data/train'
-AE_DIR   = 'trained_ae'
 GAN_DIR  = 'trained_models'
 
 # Prefijo para los archivos de modelo
 MODEL_PREFIX = 'GAN_009_Modded'
-
-# ── Autoencoder ──────────────────────────────────────────────
-AE_TARGET   = 'time'   # 'time', 'channel', o 'full'
-AE_TIME_OUT = 50       # longitud de la secuencia codificada (solo para target='time'/'full')
-AE_N_EPOCHS = 2000
-AE_SEED     = 42
 
 # ── GAN ─────────────────────────────────────────────────────
 GAN_PATCH_SIZE = 10
@@ -47,6 +46,7 @@ GAN_N_EPOCHS   = 2000
 GAN_SEED       = 42
 GAN_USE_DWT    = True   # usar MultiscaleDWTDiscriminator
 GAN_HIGH_FREQ  = True   # incluir coeficientes de alta frecuencia en DWT
+GAN_USE_STACKING = True # combinar D1 (TTS) + D2 (DWT) vía StackingDiscriminator
 
 # ────────────────────────────────────────────────────────────
 
@@ -183,35 +183,14 @@ def export_to_csv(X, y, ch_names, condition='Both', output_path='data.csv',
     return df
 
 
-def train_autoencoder(csv_path, ae_save_path, target='time', time_out=50,
-                      n_epochs=2000, seed=42):
-    """Entrena el autoencoder llamando directamente a eeggan."""
-    from eeggan.autoencoder_training_main import main as ae_main
-
-    print(f"  Entrenando AE → {ae_save_path}")
-    args = [
-        f'data={csv_path}',
-        f'save_name={os.path.basename(ae_save_path)}',
-        'kw_channel=Electrode',
-        'kw_time=Time',
-        # no pasamos kw_conditions: el AE no necesita condicionar por clase
-        f'target={target}',
-        f'time_out={time_out}',
-        f'n_epochs={n_epochs}',
-        f'seed={seed}',
-    ]
-    ae_main(args)
-
-
-def train_gan(csv_path, ae_save_path, gan_save_path, patch_size=10,
-              n_epochs=2000, seed=42, use_dwt=True, high_freq=True):
-    """Entrena la GAN llamando directamente a eeggan."""
+def train_gan(csv_path, gan_save_path, patch_size=10,
+              n_epochs=2000, seed=42, use_dwt=True, high_freq=True, use_stacking=False):
+    """Entrena la GAN llamando directamente a eeggan (sin autoencoder — ttsgan-direct)."""
     from eeggan.gan_training_main import main as gan_main
 
     print(f"  Entrenando GAN → {gan_save_path}")
     args = [
         f'data={csv_path}',
-        f'autoencoder={ae_save_path}',
         f'save_name={os.path.basename(gan_save_path)}',
         'kw_channel=Electrode',
         'kw_conditions=Condition',
@@ -224,6 +203,8 @@ def train_gan(csv_path, ae_save_path, gan_save_path, patch_size=10,
         args.append('use_multiscale_dwt_discriminator')
     if high_freq:
         args.append('multiscale_dwt_high_freq=True')
+    if use_stacking:
+        args.append('use_stacking')
     gan_main(args)
 
 
@@ -232,7 +213,7 @@ def main():
     from moabb.paradigms import P300
 
     parser = argparse.ArgumentParser(
-        description="Pipeline BNCI2014_009 (P300) -> CSV -> Autoencoder -> GAN"
+        description="Pipeline BNCI2014_009 (P300) -> CSV -> GAN (ttsgan-direct, sin autoencoder)"
     )
     parser.add_argument(
         '--subjects', type=int, nargs='+', default=SUBJECTS,
@@ -244,7 +225,6 @@ def main():
     paradigm = P300()
 
     os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(AE_DIR,   exist_ok=True)
     os.makedirs(GAN_DIR,  exist_ok=True)
 
     for subject in args.subjects:
@@ -254,7 +234,6 @@ def main():
 
         # Rutas de archivos
         csv_path      = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')
-        ae_save_path  = os.path.join(AE_DIR,   f'AE_BNCI2014009_s{subject:03d}.pt')
         gan_save_path = os.path.join(GAN_DIR,  f'{MODEL_PREFIX}_s{subject:03d}.pt')
 
         # 1. Exportar CSV (se omite si ya existe)
@@ -278,26 +257,15 @@ def main():
                 norm=NORM,
             )
 
-        # 2. Entrenar autoencoder (se omite si ya existe)
-        if os.path.exists(ae_save_path):
-            print(f'  AE ya existe, se omite el entrenamiento: {ae_save_path}')
-        else:
-            train_autoencoder(
-                csv_path, ae_save_path,
-                target=AE_TARGET,
-                time_out=AE_TIME_OUT,
-                n_epochs=AE_N_EPOCHS,
-                seed=AE_SEED,
-            )
-
-        # 3. Entrenar GAN
+        # 2. Entrenar GAN directamente sobre los datos crudos multicanal (sin AE)
         train_gan(
-            csv_path, ae_save_path, gan_save_path,
+            csv_path, gan_save_path,
             patch_size=GAN_PATCH_SIZE,
             n_epochs=GAN_N_EPOCHS,
             seed=GAN_SEED,
             use_dwt=GAN_USE_DWT,
             high_freq=GAN_HIGH_FREQ,
+            use_stacking=GAN_USE_STACKING,
         )
 
     print('\nPipeline completado.')

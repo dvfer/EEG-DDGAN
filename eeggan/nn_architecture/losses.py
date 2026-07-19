@@ -112,4 +112,8 @@ class WassersteinGradientPenaltyLoss(WassersteinLoss):
                                   create_graph=True,
                                   retain_graph=True)[0]
         grad_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.gradient_penalty_weight
+        # ttsgan-native-multichannel: this reshape/interpolation path was only exercised at
+        # channel_dim==1 historically; fail loudly instead of silently corrupting training
+        # if a multichannel shape mismatch ever produces a non-finite penalty.
+        assert torch.isfinite(grad_penalty), f"Gradient penalty is not finite: {grad_penalty}"
         return grad_penalty

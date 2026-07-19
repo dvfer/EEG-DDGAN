@@ -269,7 +269,6 @@ def default_inputs_training_gan():
         'generator_lr': [float, 'Learning rate for the generator', 0.0001, 'Generator learning rate: '],
         'data': [str, 'Path to a dataset', os.path.join('data', 'eeggan_training_example.csv'), 'Dataset: '],
         'checkpoint': [str, 'Path to a pre-trained GAN', '', 'Using pre-trained GAN: '],
-        'autoencoder': [str, 'Path to an autoencoder', '', 'Using autoencoder: '],
         'kw_conditions': [str, '** Conditions to be used', '', 'Conditions: '],
         'kw_time': [str, 'Keyword to detect the time steps of the dataset; e.g. if [Time1, Time2, ...] -> use Time', 'Time', 'Time label: '],
         'kw_channel': [str, 'Keyword to detect used channels', '', 'Channel label: '],

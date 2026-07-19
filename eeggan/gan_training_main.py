@@ -77,7 +77,6 @@ def main(args=None):
         'n_epochs': default_args['n_epochs'],
         'checkpoint': default_args['checkpoint'],
         'data': default_args['data'],
-        'autoencoder': default_args['autoencoder'],
         'batch_size': default_args['batch_size'],
         'discriminator_lr': default_args['discriminator_lr'],
         'generator_lr': default_args['generator_lr'],
@@ -133,25 +132,15 @@ def main(args=None):
     opt['sequence_length'] = dataset.shape[1] - dataloader.labels.shape[1]
     opt['n_samples'] = dataset.shape[0]
 
-    ae_dict = torch.load(opt['autoencoder'], map_location=torch.device('cpu'), weights_only=False) if opt['autoencoder'] != '' else []
-    # check if generated sequence is a multiple of patch size   
-    encoded_sequence = False
-    def pad_warning(sequence_length, encoded_sequence=False):
-        error_msg = f"Sequence length ({sequence_length}) must be a multiple of patch size ({default_args['patch_size']})."
-        error_msg += " Please adjust the 'patch_size' or "
-        if encoded_sequence:
-            error_msg += "adjust the output sequence length of the autoencoder ('time_out'). The latter option requires a newly trained autoencoder."
-        else:
-            error_msg += "adjust the sequence length of the dataset."
-        raise ValueError(error_msg)
-    if ae_dict and (ae_dict['configuration']['target'] == 'full' or ae_dict['configuration']['target'] == 'time'):
-        generated_seq_length = ae_dict['configuration']['time_out']
-        encoded_sequence = True
-    else:
-        generated_seq_length = opt['sequence_length']
-    if generated_seq_length % default_args['patch_size'] != 0:
-        pad_warning(generated_seq_length, encoded_sequence)
-        
+    # check if generated sequence is a multiple of patch size
+    def pad_warning(sequence_length):
+        raise ValueError(
+            f"Sequence length ({sequence_length}) must be a multiple of patch size ({default_args['patch_size']}). "
+            "Please adjust the 'patch_size' or the sequence length of the dataset."
+        )
+    if opt['sequence_length'] % default_args['patch_size'] != 0:
+        pad_warning(opt['sequence_length'])
+
     opt['latent_dim_in'] = opt['latent_dim'] + opt['n_conditions']
     opt['channel_in_disc'] = opt['n_channels'] + opt['n_conditions']
     opt['sequence_length_generated'] = opt['sequence_length']

@@ -101,6 +101,17 @@ def main(args=None):
         if n_conditions != len(condition):
             raise ValueError(f"Number of conditions in model ({n_conditions}) does not match number of conditions given ({len(condition)}).")
 
+        # this pipeline only supports checkpoints produced by the autoencoder-free
+        # ttsgan-direct pipeline; fail clearly rather than silently mismatching shapes
+        # for a checkpoint trained through the (removed) autoencoder-wrapped path
+        if state_dict['configuration'].get('autoencoder'):
+            raise NotImplementedError(
+                "This checkpoint was trained with an autoencoder-wrapped generator/discriminator "
+                f"(configuration['autoencoder'] = {state_dict['configuration']['autoencoder']!r}), which "
+                "the autoencoder-free ttsgan-direct pipeline does not support. Use the 'main' branch to "
+                "load this checkpoint instead."
+            )
+
         # define device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -109,7 +120,7 @@ def main(args=None):
         latent_dim_in = latent_dim + n_conditions
 
         generator, _ = init_gan(latent_dim_in=latent_dim_in,
-                                channel_in_disc=n_channels,
+                                channel_in_disc=n_channels + n_conditions,
                                 n_channels=n_channels,
                                 n_conditions=n_conditions,
                                 sequence_length_generated=sequence_length,
@@ -117,7 +128,6 @@ def main(args=None):
                                 hidden_dim=state_dict['configuration']['hidden_dim'],
                                 num_layers=state_dict['configuration']['num_layers'],
                                 patch_size=state_dict['configuration']['patch_size'],
-                                autoencoder=state_dict['configuration']['autoencoder'],
                                 )
         generator.eval()
         if isinstance(generator, DecoderGenerator):

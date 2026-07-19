@@ -10,7 +10,8 @@ Reference guide for AI assistants (and humans) working in this repository.
 
 - **Upstream:** `AutoResearch/EEG-GAN` (Brown University, Autonomous Empirical Research Group). Canonical docs: https://autoresearch.github.io/EEG-GAN/
 - **This fork:** `dvfer/EEG-DDGAN` — customized for **P300 generation** from the MOABB `BNCI2014_009` dataset, via the custom driver `moabb_pipeline.py`.
-- **Core method:** Wasserstein GAN with Gradient Penalty (WGAN-GP) using a patch-based Transformer generator/discriminator (the "TTS-GAN" family), optionally coupled with a frozen autoencoder and a multi-scale Discrete-Wavelet-Transform (DWT) discriminator.
+- **Core method:** Wasserstein GAN with Gradient Penalty (WGAN-GP) using a patch-based Transformer generator/discriminator (the "TTS-GAN" family), optionally coupled with a multi-scale Discrete-Wavelet-Transform (DWT) discriminator (+ a stacking meta-discriminator combining both).
+- **Branch note (`ttsgan-direct`):** this branch trains **directly on raw (optionally multi-channel) EEG** — the autoencoder-coupled generator/discriminator path (`DecoderGenerator`/`EncoderDiscriminator` around a `TransformerAutoencoder`) was removed from `init_gan`/`gan_training_main.py`/`system_inputs.py`. It remains available on `main`. See `openspec/changes/ttsgan-native-multichannel/`.
 - **Version:** 2.0.2 (see `pyproject.toml`).
 
 > Note: The `mkdocs.yml` at the repo root is **stale** — the doc sources it references were deleted in commit `3548eb9`. Only `README.md`, `LICENSE.md`, and `eeggan/trained_models/pretrained_gan.pt` remain as non-code artifacts.
@@ -89,8 +90,8 @@ The pipeline is driven by the `eeggan <command>` CLI (see `eeggan/__main__.py:11
                                                               visualize (loss/avg/PCA/tSNE/FFT)
 ```
 
-1. **Autoencoder** (optional, recommended for multichannel) — compresses channels/time into a latent space. Saves to `trained_ae/`.
-2. **GAN training** — TTS generator + discriminator, optionally wrapped around the frozen AE, with an optional DWT secondary discriminator. Saves to `trained_models/`.
+1. **Autoencoder** (optional, `main` branch only — not on `ttsgan-direct`) — compresses channels/time into a latent space. Saves to `trained_ae/`.
+2. **GAN training** — TTS generator + discriminator (on `ttsgan-direct`: always trained directly on raw data, never AE-wrapped), with an optional DWT secondary discriminator (+ optional stacking meta-discriminator). Saves to `trained_models/`.
 3. **Generate samples** — load a `.pt` checkpoint, draw latent vars conditioned on labels, write synthetic trial CSVs to `generated_samples/`.
 4. **Visualize** — inspect losses, averaged curves, PCA/t-SNE vs. real data, FFT/spectrograms.
 
@@ -125,12 +126,13 @@ eeggan autoencoder_training data=data/subject_001.csv \
     target=full channels_out=10 time_out=10 \
     n_epochs=2000 seed=42 save_name=AE_s001
 
-# Train a GAN (with AE + multiscale DWT discriminator + high-freq coefficients)
+# Train a GAN directly on raw (optionally multichannel) data
+# (multiscale DWT discriminator + high-freq coefficients + stacking meta-discriminator)
+# NOTE: 'autoencoder=' is not accepted on the ttsgan-direct branch (main only).
 eeggan gan_training data=data/subject_001.csv \
-    autoencoder=trained_ae/AE_s001.pt \
     kw_channel=Electrode kw_conditions=Condition kw_time=Time \
     patch_size=10 n_epochs=2000 seed=42 \
-    use_multiscale_dwt_discriminator multiscale_dwt_high_freq=True \
+    use_multiscale_dwt_discriminator multiscale_dwt_high_freq=True use_stacking \
     save_name=GAN_s001
 
 # Generate synthetic samples (conditions: -1 = random for binary)
@@ -195,8 +197,8 @@ Helpers to produce this format: `eeggan/helpers/moabb_export.py:26` (`export_to_
 ### Conditional generation
 Conditions (`kw_conditions`) are appended to the generator's latent input (`latent_dim + n_conditions`, `gan_training_main.py:155`) and to the discriminator's channel input (`gan_training_main.py:156`). At inference, `conditions=-1`/`-2` selects randomly.
 
-### Autoencoder–GAN coupling
-A frozen `TransformerDoubleAutoencoder` can wrap the GAN: `DecoderGenerator` decodes generator output to raw space; `EncoderDiscriminator` encodes real/fake into latent space before discrimination (`models.py:36,68`). This lets the GAN learn in a compressed representation.
+### Autoencoder–GAN coupling (`main` branch only)
+On `main`, a frozen `TransformerDoubleAutoencoder` can wrap the GAN: `DecoderGenerator` decodes generator output to raw space; `EncoderDiscriminator` encodes real/fake into latent space before discrimination (`models.py:36,68`). This lets the GAN learn in a compressed representation. **On `ttsgan-direct`, this path was removed from `init_gan`** — the GAN always trains directly on raw (optionally multi-channel) data; `autoencoder=` is not an accepted CLI argument here. See `openspec/changes/ttsgan-native-multichannel/`.
 
 ### Multi-scale DWT discriminator
 `MultiscaleDWTDiscriminator` (`models.py:104`) uses `pytorch_wavelets.DWT1DForward` with **J=4 progressive decomposition levels** and **`db4`** wavelet (`models.py:110,114`). Each level has MLP heads for low-freq approximation coefficients and (optionally, via `multiscale_dwt_high_freq`) high-freq detail coefficients. Activated by `use_multiscale_dwt_discriminator`. **Requires the undeclared `pytorch_wavelets` package.**
@@ -230,8 +232,9 @@ MODEL_PREFIX = 'GAN_009_Modded'
 Per subject it:
 1. Loads MOABB `BNCI2014_009` P300 data → `X` of shape `(n_trials, n_channels, n_timepoints)`.
 2. Writes the long-format CSV to `subject_data/train/subject_XXX.csv` (`export_to_csv`, `moabb_pipeline.py:81`).
-3. Trains the autoencoder → `trained_ae/AE_BNCI2014009_sXXX.pt`.
-4. Trains the GAN → `trained_models/GAN_009_Modded_sXXX.pt`.
+3. Trains the GAN directly on the raw multi-channel CSV (no autoencoder step on this branch) → `trained_models/GAN_009_Modded_sXXX.pt`.
+
+`patch_size` must divide the dataset's raw sequence length (there is no AE `time_out` to size against anymore); `gan_training_main.py` raises a clear `ValueError` if it doesn't.
 
 Requires the `moabb` (+ `mne`) packages. Run with `python moabb_pipeline.py`.
 
@@ -287,8 +290,12 @@ pip install pytorch_wavelets   # ONLY if using the DWT discriminator
 
 ## 11. Git Context
 
-- **Remote:** `git@github.com:dvfer/EEG-DDGAN.git` (origin), on `main`.
+- **Remote:** `git@github.com:dvfer/EEG-DDGAN.git` (origin).
 - **Upstream origin of the code:** `AutoResearch/EEG-GAN`.
-- **Notable commits:**
+- **Branches:**
+  - `main` — autoencoder-capable pipeline (the one described generically above unless a branch note says otherwise).
+  - `mv-train` (remote) — added multivariate/MOABB support: the `MultiscaleDWTDiscriminator.forward` dim-based reshape fix and `moabb_pipeline.py`/`moabb_export.py`.
+  - `ttsgan-direct` (local, based on `mv-train`) — this branch. Removes the autoencoder-coupled GAN path entirely (`init_gan`, `gan_training_main.py`, `system_inputs.py`, `generate_samples_main.py`), keeps the dual wavelet discriminator + feature matching + stacking, and adapts `moabb_pipeline.py` to train directly on raw multi-channel data. Tracked via `openspec/changes/ttsgan-native-multichannel/`.
+- **Notable commits (pre-fork history):**
   - `3548eb9` — "delete docs, pretrained weights" (removed the `docs/` sources + most pretrained models; `mkdocs.yml` left behind and is now stale).
   - `cc99608` — "EEG-DDGAN" (the fork-specific additions, including `moabb_pipeline.py`).

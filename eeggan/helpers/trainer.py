@@ -351,6 +351,12 @@ class GANTrainer(Trainer):
                      lambda_fm = 20
                      
                      if features_fake_d2 is not None and feats_real_d2 is not None:
+                          # ttsgan-native-multichannel: l1_loss silently broadcasts on shape
+                          # mismatch instead of erroring, which would hide a channel-dim bug.
+                          assert features_fake_d2.shape == feats_real_d2.shape, (
+                              f"Feature-matching shape mismatch (stacking): fake={tuple(features_fake_d2.shape)} "
+                              f"real={tuple(feats_real_d2.shape)}"
+                          )
                           g_loss += lambda_fm * torch.nn.functional.l1_loss(features_fake_d2, feats_real_d2)
             
 
@@ -380,6 +386,12 @@ class GANTrainer(Trainer):
                              features_real = None 
                      
                      if features_real is not None:
+                         # ttsgan-native-multichannel: l1_loss silently broadcasts on shape
+                         # mismatch instead of erroring, which would hide a channel-dim bug.
+                         assert features_fake.shape == features_real.shape, (
+                             f"Feature-matching shape mismatch (secondary D): fake={tuple(features_fake.shape)} "
+                             f"real={tuple(features_real.shape)}"
+                         )
                          # L1 Feature Matching Loss
                          fm_loss = torch.nn.functional.l1_loss(features_fake, features_real)
                          lambda_fm = 20
