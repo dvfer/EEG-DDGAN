@@ -64,7 +64,7 @@ def main(args=None):
             os.makedirs(path)
         path_samples = os.path.join(path, path_samples)
 
-    state_dict = torch.load(file, map_location='cpu')
+    state_dict = torch.load(file, map_location='cpu', weights_only=False)
 
     # define device
     device = torch.device('cpu')

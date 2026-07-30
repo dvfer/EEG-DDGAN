@@ -81,7 +81,7 @@ def main(args=None):
     # Load VAE
     model_dict = None
     if default_args['checkpoint']!='' and os.path.isfile(default_args['checkpoint']):
-        model_dict = torch.load(default_args['checkpoint'])
+        model_dict = torch.load(default_args['checkpoint'], weights_only=False)
     elif default_args['checkpoint']!='' and not os.path.isfile(default_args['checkpoint']):
         raise FileNotFoundError(f"Checkpoint file {default_args['checkpoint']} not found.")
     

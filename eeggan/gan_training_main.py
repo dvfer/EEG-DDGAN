@@ -166,7 +166,7 @@ def main(args=None):
     if default_args['checkpoint'] != '':
         
         # load checkpoint
-        model_dict = torch.load(default_args['checkpoint'])
+        model_dict = torch.load(default_args['checkpoint'], weights_only=False)
 
         # update history
         for key in history.keys():

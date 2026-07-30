@@ -611,7 +611,7 @@ class GANTrainer(Trainer):
     def load_checkpoint(self, path_checkpoint):
         if os.path.isfile(path_checkpoint):
             # load state_dicts
-            state_dict = torch.load(path_checkpoint, map_location=self.device)
+            state_dict = torch.load(path_checkpoint, map_location=self.device, weights_only=False)
             self.generator.load_state_dict(state_dict['generator'])
             self.discriminator.load_state_dict(state_dict['discriminator'])
             self.generator_optimizer.load_state_dict(state_dict['generator_optimizer'])
@@ -872,7 +872,7 @@ class AETrainer(Trainer):
     def load_checkpoint(self, path_checkpoint):
         if os.path.isfile(path_checkpoint):
             # load state_dicts
-            state_dict = torch.load(path_checkpoint, map_location=self.device)
+            state_dict = torch.load(path_checkpoint, map_location=self.device, weights_only=False)
             consume_prefix_in_state_dict_if_present(state_dict['model'], 'module.') 
             if self.training_levels == 2 and self.training_level == 1:
                 self.model.load_state_dict(state_dict['model_1'])
@@ -1069,7 +1069,7 @@ class VAETrainer(Trainer):
     def load_checkpoint(self, path_checkpoint):
         if os.path.isfile(path_checkpoint):
             # load state_dicts
-            state_dict = torch.load(path_checkpoint, map_location=self.device)
+            state_dict = torch.load(path_checkpoint, map_location=self.device, weights_only=False)
             consume_prefix_in_state_dict_if_present(state_dict['model'], 'module.')
             self.model.load_state_dict(state_dict['model'])
             self.optimizer.load_state_dict(state_dict['optimizer'])

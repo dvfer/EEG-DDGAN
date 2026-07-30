@@ -128,7 +128,7 @@ def main(args=None):
     # Initiate autoencoder
     model_dict = None
     if default_args['checkpoint']!='' and os.path.isfile(default_args['checkpoint']):
-        model_dict = torch.load(default_args['checkpoint'])
+        model_dict = torch.load(default_args['checkpoint'], weights_only=False)
 
         target_old = opt['target']
         channels_out_old = opt['channels_out']

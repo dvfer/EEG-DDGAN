@@ -16,7 +16,7 @@ def main():
         path = 'trained_models'
         file = os.path.join(path, file)
 
-    state_dict = torch.load(file, map_location='cpu')
+    state_dict = torch.load(file, map_location='cpu', weights_only=False)
     print(f'\nGAN Configuration of {file}:')
     for key, value in state_dict['configuration'].items():
         print(f'\t{key}: {value}')

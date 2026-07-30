@@ -31,7 +31,7 @@ if __name__ == '__main__':
 
     print(f'Loading checkpoint from {file}')
 
-    checkpoint = torch.load(file, map_location=torch.device('cpu'))
+    checkpoint = torch.load(file, map_location=torch.device('cpu'), weights_only=False)
     filename = file.split(os.path.sep)[-1].split('.')[0]
     path = '../generated_samples'
     for k in key:

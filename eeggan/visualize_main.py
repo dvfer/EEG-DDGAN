@@ -55,7 +55,7 @@ def main(args=None):
         conditions = dataloader.get_labels()[:, :, 0].numpy()
         random = True
     elif default_args['model'] != '':
-        state_dict = torch.load(default_args['model'], map_location='cpu')
+        state_dict = torch.load(default_args['model'], map_location='cpu', weights_only=False)
         n_conditions = state_dict['configuration']['n_conditions'] if 'n_conditions' in state_dict['configuration'].keys() else 0
         data = np.concatenate(state_dict['samples'])
         if len(data.shape) == 2:
