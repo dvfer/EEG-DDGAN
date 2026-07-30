@@ -119,7 +119,7 @@ def main(args=None):
         print("Initializing generator...")
         latent_dim_in = latent_dim + n_conditions
 
-        generator, _ = init_gan(latent_dim_in=latent_dim_in,
+        generator, _, _ = init_gan(latent_dim_in=latent_dim_in,
                                 channel_in_disc=n_channels + n_conditions,
                                 n_channels=n_channels,
                                 n_conditions=n_conditions,
