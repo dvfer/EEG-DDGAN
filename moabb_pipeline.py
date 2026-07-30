@@ -80,7 +80,7 @@ def get_channel_names(dataset, subject):
 
 
 def export_to_csv(X, y, ch_names, condition='Both', output_path='data.csv',
-                  norm=False):
+                  norm=False, patch_size=None):
     """Exporta EEG multi-canal a CSV en formato largo compatible con Dataloader.
 
     Args:
@@ -90,6 +90,9 @@ def export_to_csv(X, y, ch_names, condition='Both', output_path='data.csv',
         condition:  'Target' (solo clase 1), 'NonTarget' (clase 0), o 'Both'
         output_path: ruta de salida del CSV
         norm:       si True, aplica z-score por trial antes de exportar
+        patch_size: si se indica, recorta los timepoints finales para que
+                    n_timepoints sea múltiplo de patch_size (requerido por la
+                    GAN, ver gan_training_main.pad_warning)
 
     CSV resultante (formato largo):
         ParticipantID | Condition | Trial | Electrode | Time1 | Time2 | ...
@@ -107,6 +110,17 @@ def export_to_csv(X, y, ch_names, condition='Both', output_path='data.csv',
             f"X debe ser 3-D (n_trials, n_channels, n_timepoints), "
             f"recibido {X.shape}"
         )
+
+    if patch_size:
+        n_keep = (X.shape[2] // patch_size) * patch_size
+        if n_keep == 0:
+            raise ValueError(
+                f"n_timepoints ({X.shape[2]}) < patch_size ({patch_size})"
+            )
+        if n_keep != X.shape[2]:
+            print(f"  Recortando timepoints {X.shape[2]} -> {n_keep} "
+                  f"(múltiplo de patch_size={patch_size})")
+        X = X[:, :, :n_keep]
 
     n_trials, n_channels, n_timepoints = X.shape
 
@@ -255,6 +269,7 @@ def main():
                 condition=CONDITION,
                 output_path=csv_path,
                 norm=NORM,
+                patch_size=GAN_PATCH_SIZE,
             )
 
         # 2. Entrenar GAN directamente sobre los datos crudos multicanal (sin AE)
