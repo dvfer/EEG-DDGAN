@@ -18,6 +18,7 @@ matplotlib.use('Agg')  # sin display en el servidor de entrenamiento
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 from eeggan.helpers.dataloader import Dataloader
 from eeggan.helpers.visualize_pca import visualization_dim_reduction
@@ -75,23 +76,37 @@ def load(csv_path, norm_data):
     return data, labels
 
 
+def _long_df(data_2d, tipo_senal):
+    """(trials, tiempo) -> formato largo para sns.lineplot (promedio+banda automáticos)."""
+    n_trials, seq_len = data_2d.shape
+    return pd.DataFrame({
+        'tiempo': np.tile(np.arange(seq_len), n_trials),
+        'amplitud': data_2d.flatten(),
+        'tipo_senal': tipo_senal,
+    })
+
+
 def plot_erp_overlay(real_data, real_labels, gen_data, gen_labels, out_path):
     n_channels = real_data.shape[-1]
     ncols = min(4, n_channels)
     nrows = int(np.ceil(n_channels / ncols))
 
     for name, cond in CONDITIONS.items():
-        real_avg = real_data[real_labels == cond].mean(axis=0)
-        gen_avg  = gen_data[gen_labels == cond].mean(axis=0)
-
         fig, axs = plt.subplots(nrows, ncols, figsize=(4 * ncols, 2.5 * nrows), squeeze=False)
-        fig.suptitle(f'ERP promedio por canal — {name} (real vs sintético)')
+        fig.suptitle(f'ERP promedio ± desvío estándar por canal — {name} (real vs sintético)')
         for ch in range(n_channels):
             ax = axs[ch // ncols, ch % ncols]
-            ax.plot(real_avg[:, ch], color='black', label='Real')
-            ax.plot(gen_avg[:, ch], color='red', linestyle='--', label='Sintético')
+            df = pd.concat([
+                _long_df(real_data[real_labels == cond][:, :, ch], 'Real'),
+                _long_df(gen_data[gen_labels == cond][:, :, ch], 'Sintético'),
+            ], ignore_index=True)
+            sns.lineplot(data=df, x='tiempo', y='amplitud', hue='tipo_senal',
+                         errorbar='sd', ax=ax, legend=(ch == 0))
             ax.set_title(f'Canal {ch}', fontsize=8)
-        axs[0, 0].legend(fontsize=7)
+            ax.set_xlabel('')
+            ax.set_ylabel('')
+        if n_channels:
+            axs[0, 0].legend(fontsize=7)
         for ch in range(n_channels, nrows * ncols):
             axs[ch // ncols, ch % ncols].axis('off')
         fig.tight_layout()
