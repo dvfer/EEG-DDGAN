@@ -65,17 +65,17 @@ def init_gan(latent_dim_in,
     discriminator2 = None
     secondary_feat_dim = 100 # Default fallback
     if kwargs.get('use_multiscale_dwt_discriminator', False):
+        j = kwargs.get('dwt_j', 4)
         discriminator2 = MultiscaleDWTDiscriminator(
             in_channels=channel_in_disc,
-            J=4,  # 4 levels of decomposition
+            J=j,
             n_classes=1,
             seq_len=kwargs.get('sequence_length'),
             include_high_freq=kwargs.get('multiscale_dwt_high_freq', False)
         ).to(device)
         # Calculation: (hidden_dim // 2) * J * num_streams
-        # hidden=64 -> 32 * 4 * (2 if high_freq else 1) = 128 or 256
+        # hidden=64 -> 32 * J * (2 if high_freq else 1)
         hd = 64
-        j = 4
         ns = 2 if kwargs.get('multiscale_dwt_high_freq', False) else 1
         secondary_feat_dim = (hd // 2) * j * ns
 
