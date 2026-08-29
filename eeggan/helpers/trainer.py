@@ -121,6 +121,7 @@ class GANTrainer(Trainer):
             'critic_iterations': self.critic_iterations,
             'lambda_gp': self.lambda_gp,
             'lambda_fm': self.lambda_fm,
+            'use_postnet': opt.get('use_postnet', False),
             'patch_size': opt['patch_size'] if 'patch_size' in opt else None,
             'b1': self.b1,
             'b2': self.b2,

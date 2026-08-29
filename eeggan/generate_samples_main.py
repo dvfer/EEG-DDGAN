@@ -128,6 +128,7 @@ def main(args=None):
                                 hidden_dim=state_dict['configuration']['hidden_dim'],
                                 num_layers=state_dict['configuration']['num_layers'],
                                 patch_size=state_dict['configuration']['patch_size'],
+                                use_postnet=state_dict['configuration'].get('use_postnet', False),
                                 )
         generator.eval()
         if isinstance(generator, DecoderGenerator):

@@ -281,6 +281,7 @@ def default_inputs_training_gan():
         'multiscale_dwt_high_freq': [bool, 'Include high-frequency coefficients in Multiscale DWT', False, 'Including high-freq coefficients'],
         'dwt_j': [int, 'Number of DWT decomposition levels (J)', 4, 'DWT decomposition levels: '],
         'lambda_fm': [int, 'Feature-matching loss weight', 20, 'Feature-matching lambda: '],
+        'use_postnet': [bool, 'Use residual PostNet smoothing on generator output', False, 'Using PostNet smoothing'],
         'use_stacking': [bool, 'Use Meta-Learner Stacking Discriminator', False, 'Using Stacking Discriminator'],
     }
 

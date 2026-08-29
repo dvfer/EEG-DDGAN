@@ -21,11 +21,47 @@ class Discriminator(nn.Module):
         raise NotImplementedError
 
 
+class PostNet(nn.Module):
+    """Tacotron2-style residual conv stack: smooths patch-boundary seams left by
+    TTSGenerator's non-overlapping patch reconstruction. Trained end-to-end with
+    the generator's own adversarial + feature-matching losses -- no pretraining,
+    no coupling to another network. See openspec/changes/generator-postnet-smoothing.
+
+    No BatchNorm1d: generation can run batch_size=1 (num_samples_parallel=1),
+    which BatchNorm1d rejects in training mode. Plain conv + Tanh is enough for
+    a small residual smoothing stack.
+    """
+    def __init__(self, channels, hidden_dim=32, kernel_size=5, n_layers=3):
+        super().__init__()
+        pad = kernel_size // 2
+        layers = []
+        in_ch = channels
+        for i in range(n_layers):
+            out_ch = channels if i == n_layers - 1 else hidden_dim
+            layers.append(nn.Conv1d(in_ch, out_ch, kernel_size, padding=pad))
+            if i < n_layers - 1:
+                layers.append(nn.Tanh())
+            in_ch = out_ch
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # x: (B, L, C) -> conv over time (B, C, L) -> back to (B, L, C)
+        residual = self.net(x.permute(0, 2, 1).contiguous())
+        return residual.permute(0, 2, 1).contiguous()
+
+
 class TTSGenerator(TTSGenerator_Org):
     def __init__(self, seq_len=150, patch_size=15, channels=3, num_classes=9, latent_dim=100, embed_dim=10, depth=3,
-                 num_heads=5, forward_drop_rate=0.5, attn_drop_rate=0.5):
+                 num_heads=5, forward_drop_rate=0.5, attn_drop_rate=0.5, use_postnet=False):
         super(TTSGenerator, self).__init__(seq_len, patch_size, channels, num_classes, latent_dim, embed_dim, depth,
                  num_heads, forward_drop_rate, attn_drop_rate)
+        self.postnet = PostNet(channels) if use_postnet else None
+
+    def forward(self, z):
+        output = super(TTSGenerator, self).forward(z)
+        if self.postnet is not None:
+            output = output + self.postnet(output)
+        return output
 
 
 class TTSDiscriminator(TTSDiscriminator_Org):
@@ -276,3 +312,39 @@ class StackingDiscriminator(nn.Module):
              # If Secondary is DISABLED or features missing:
              # Bypass Meta-Head completely. Return Primary validity.
              return val1, (feats1, None)
+
+
+def _demo_postnet_self_check():
+    """Smallest runnable check for TTSGenerator's use_postnet wiring (see
+    openspec/changes/generator-postnet-smoothing). Not a test framework --
+    just the checks that fail if the logic breaks."""
+    torch.manual_seed(0)
+    z = torch.randn(2, 138)  # (batch, latent_dim)
+    kwargs = dict(seq_len=20, patch_size=4, channels=3, num_classes=1,
+                  latent_dim=138, embed_dim=10, depth=1, num_heads=2,
+                  forward_drop_rate=0.0, attn_drop_rate=0.0)
+
+    # (a) default (no use_postnet arg) must match use_postnet=False exactly
+    gen_default = TTSGenerator(**kwargs)
+    gen_off = TTSGenerator(**kwargs, use_postnet=False)
+    gen_off.load_state_dict(gen_default.state_dict())
+    assert gen_default.postnet is None and gen_off.postnet is None
+    out_default = gen_default(z)
+    out_off = gen_off(z)
+    assert out_default.shape == (2, 20, 3)
+    assert torch.allclose(out_default, out_off), "use_postnet=False must be a no-op"
+
+    # (b) use_postnet=True keeps output shape and gets gradients
+    gen_on = TTSGenerator(**kwargs, use_postnet=True)
+    assert gen_on.postnet is not None
+    out_on = gen_on(z)
+    assert out_on.shape == (2, 20, 3)
+    out_on.sum().backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in gen_on.postnet.parameters()), \
+        "gradients must reach postnet parameters"
+
+    print("PostNet self-check OK: backward-compat no-op + shape + gradient flow.")
+
+
+if __name__ == '__main__':
+    _demo_postnet_self_check()

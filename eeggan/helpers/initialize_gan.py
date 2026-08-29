@@ -2,7 +2,7 @@ from eeggan.nn_architecture.models import TTSGenerator, TTSDiscriminator, Multis
 
 
 gan_architectures = {
-        'TTSGenerator': lambda seq_len, hidden_dim, patch_size, channels, latent_dim, num_layers, num_heads, **kwargs: TTSGenerator(seq_len, patch_size, channels, 1, latent_dim, 10, num_layers, num_heads, 0.5, 0.5),
+        'TTSGenerator': lambda seq_len, hidden_dim, patch_size, channels, latent_dim, num_layers, num_heads, use_postnet=False, **kwargs: TTSGenerator(seq_len, patch_size, channels, 1, latent_dim, 10, num_layers, num_heads, 0.5, 0.5, use_postnet=use_postnet),
         'TTSDiscriminator': lambda channels, hidden_dim, patch_size, seq_len, num_layers, **kwargs: TTSDiscriminator(channels, patch_size, 50, seq_len, num_layers, 1),
     }
 
@@ -45,6 +45,7 @@ def init_gan(latent_dim_in,
 
         # additional TTSGenerator inputs: patch_size
         patch_size=patch_size,
+        use_postnet=kwargs.get('use_postnet', False),
     )
     assert generator.channels == n_channels, (
         f"Generator was built with {generator.channels} output channels, expected n_channels={n_channels}."

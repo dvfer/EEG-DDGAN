@@ -106,6 +106,7 @@ def main(args=None):
         'multiscale_dwt_high_freq': default_args.get('multiscale_dwt_high_freq', False),
         'dwt_j': default_args.get('dwt_j', 4),
         'lambda_fm': default_args.get('lambda_fm', 20),
+        'use_postnet': default_args.get('use_postnet', False),
         'seed': default_args['seed'],
         'save_name': default_args['save_name'],
         'history': None,
