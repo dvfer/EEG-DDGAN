@@ -168,7 +168,7 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
                 trials = data[labels == cond][:, :, ch]
                 if trials.shape[0] == 0:
                     continue
-                nperseg = min(fs, trials.shape[1])
+                nperseg = min(fs // 4, trials.shape[1])  # fs//4: mismo Welch que signal_analysis.ipynb
                 f, pxx = welch(trials, fs=fs, nperseg=nperseg, axis=1)
                 mean, std = pxx.mean(axis=0), pxx.std(axis=0)
                 means[label] = mean
