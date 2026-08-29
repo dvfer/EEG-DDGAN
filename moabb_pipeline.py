@@ -47,6 +47,7 @@ GAN_SEED       = 42
 GAN_USE_DWT    = True   # usar MultiscaleDWTDiscriminator
 GAN_HIGH_FREQ  = True   # incluir coeficientes de alta frecuencia en DWT
 GAN_DWT_J      = 4      # niveles de descomposición DWT (techo ~log2(seq_len))
+GAN_LAMBDA_FM  = 20     # peso de la feature-matching loss
 GAN_USE_STACKING = True # combinar D1 (TTS) + D2 (DWT) vía StackingDiscriminator
 
 # ────────────────────────────────────────────────────────────
@@ -199,7 +200,8 @@ def export_to_csv(X, y, ch_names, condition='Both', output_path='data.csv',
 
 
 def train_gan(csv_path, gan_save_path, patch_size=10,
-              n_epochs=2000, seed=42, use_dwt=True, high_freq=True, dwt_j=4, use_stacking=False):
+              n_epochs=2000, seed=42, use_dwt=True, high_freq=True, dwt_j=4, lambda_fm=20,
+              use_stacking=False):
     """Entrena la GAN llamando directamente a eeggan (sin autoencoder — ttsgan-direct)."""
     from eeggan.gan_training_main import main as gan_main
 
@@ -220,6 +222,7 @@ def train_gan(csv_path, gan_save_path, patch_size=10,
         args.append('multiscale_dwt_high_freq=True')
     if use_dwt:
         args.append(f'dwt_j={dwt_j}')
+        args.append(f'lambda_fm={lambda_fm}')  # solo tiene efecto si hay D2 (DWT)
     if use_stacking:
         args.append('use_stacking')
     gan_main(args)
@@ -284,6 +287,7 @@ def main():
             use_dwt=GAN_USE_DWT,
             high_freq=GAN_HIGH_FREQ,
             dwt_j=GAN_DWT_J,
+            lambda_fm=GAN_LAMBDA_FM,
             use_stacking=GAN_USE_STACKING,
         )
 

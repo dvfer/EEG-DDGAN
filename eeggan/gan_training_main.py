@@ -104,6 +104,8 @@ def main(args=None):
         'use_stacking': default_args.get('use_stacking', False), # Added --use_stacking argument
         'use_multiscale_dwt_discriminator': default_args.get('use_multiscale_dwt_discriminator', False),
         'multiscale_dwt_high_freq': default_args.get('multiscale_dwt_high_freq', False),
+        'dwt_j': default_args.get('dwt_j', 4),
+        'lambda_fm': default_args.get('lambda_fm', 20),
         'seed': default_args['seed'],
         'save_name': default_args['save_name'],
         'history': None,

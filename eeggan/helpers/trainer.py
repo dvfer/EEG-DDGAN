@@ -53,6 +53,7 @@ class GANTrainer(Trainer):
         self.latent_dim = opt['latent_dim'] if 'latent_dim' in opt else 10
         self.critic_iterations = opt['critic_iterations'] if 'critic_iterations' in opt else 5
         self.lambda_gp = opt['lambda_gp'] if 'lambda_gp' in opt else 10
+        self.lambda_fm = opt['lambda_fm'] if 'lambda_fm' in opt else 20
         self.sample_interval = opt['sample_interval'] if 'sample_interval' in opt else 100
         self.d_lr = opt['discriminator_lr'] if 'learning_rate' in opt else 0.0001
         self.g_lr = opt['generator_lr'] if 'learning_rate' in opt else 0.0001
@@ -119,6 +120,7 @@ class GANTrainer(Trainer):
             'latent_dim': self.latent_dim,
             'critic_iterations': self.critic_iterations,
             'lambda_gp': self.lambda_gp,
+            'lambda_fm': self.lambda_fm,
             'patch_size': opt['patch_size'] if 'patch_size' in opt else None,
             'b1': self.b1,
             'b2': self.b2,
@@ -348,8 +350,6 @@ class GANTrainer(Trainer):
                           else:
                                feats_real_d1 = feats_real_tuple
                      
-                     lambda_fm = 20
-                     
                      if features_fake_d2 is not None and feats_real_d2 is not None:
                           # ttsgan-native-multichannel: l1_loss silently broadcasts on shape
                           # mismatch instead of erroring, which would hide a channel-dim bug.
@@ -357,7 +357,7 @@ class GANTrainer(Trainer):
                               f"Feature-matching shape mismatch (stacking): fake={tuple(features_fake_d2.shape)} "
                               f"real={tuple(feats_real_d2.shape)}"
                           )
-                          g_loss += lambda_fm * torch.nn.functional.l1_loss(features_fake_d2, feats_real_d2)
+                          g_loss += self.lambda_fm * torch.nn.functional.l1_loss(features_fake_d2, feats_real_d2)
             
 
             if self.discriminator2 and not is_stacking:
@@ -394,8 +394,7 @@ class GANTrainer(Trainer):
                          )
                          # L1 Feature Matching Loss
                          fm_loss = torch.nn.functional.l1_loss(features_fake, features_real)
-                         lambda_fm = 20
-                         g_loss2 = self.loss.generator(validity2) + lambda_fm * fm_loss
+                         g_loss2 = self.loss.generator(validity2) + self.lambda_fm * fm_loss
                      else:
                          g_loss2 = self.loss.generator(validity2)
                  else:

@@ -280,6 +280,7 @@ def default_inputs_training_gan():
         'use_multiscale_dwt_discriminator': [bool, 'Use Multiscale DWT Discriminator (low-freq focus)', False, 'Using Multiscale DWT Discriminator'],
         'multiscale_dwt_high_freq': [bool, 'Include high-frequency coefficients in Multiscale DWT', False, 'Including high-freq coefficients'],
         'dwt_j': [int, 'Number of DWT decomposition levels (J)', 4, 'DWT decomposition levels: '],
+        'lambda_fm': [int, 'Feature-matching loss weight', 20, 'Feature-matching lambda: '],
         'use_stacking': [bool, 'Use Meta-Learner Stacking Discriminator', False, 'Using Stacking Discriminator'],
     }
 
