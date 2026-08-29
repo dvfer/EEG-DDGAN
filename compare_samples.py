@@ -33,6 +33,7 @@ MODEL_PREFIX = 'GAN_009_Modded'
 CONDITIONS = {'NonTarget': 0, 'Target': 1}
 MAX_SAMPLES_PER_COND = 200  # cap para no generar batches gigantes
 FS = 256  # sampling rate de BNCI2014_009; ajustar si el pipeline resamplea
+PSD_FMAX = 25  # banda real del paradigm P300 de MOABB es [1,24] Hz
 
 
 def _generate_condition_csv(model_path, out_csv, condition, n_samples):
@@ -136,6 +137,7 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
                 nperseg = min(fs, trials.shape[1])
                 f, pxx = welch(trials, fs=fs, nperseg=nperseg, axis=1)
                 ax.semilogy(f, pxx.mean(axis=0), label=label)
+            ax.set_xlim(0, PSD_FMAX)
             ax.set_title(f'Canal {ch}', fontsize=8)
             ax.set_xlabel('')
             ax.set_ylabel('')
