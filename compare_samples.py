@@ -172,8 +172,8 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
                 f, pxx = welch(trials, fs=fs, nperseg=nperseg, axis=1)
                 mean, std = pxx.mean(axis=0), pxx.std(axis=0)
                 means[label] = mean
-                ax.semilogy(f, mean, color=color, linestyle=style, label=label)
-                ax.fill_between(f, np.clip(mean - std, 1e-12, None), mean + std, color=color, alpha=0.2)
+                ax.plot(f, mean, color=color, linestyle=style, label=label)
+                ax.fill_between(f, mean - std, mean + std, color=color, alpha=0.2)
             if 'Real' in means and 'Sintético' in means:
                 jsd_scores[(name, ch)] = spectral_jsd(f, means['Real'], means['Sintético'])
             ax.axvline(BP_HZ, color='gray', linewidth=1, linestyle=':', label=f'Corte real ({BP_HZ} Hz)')
@@ -185,6 +185,8 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
             axs[0, 0].legend(fontsize=7)
         for ch in range(n_channels, nrows * ncols):
             axs[ch // ncols, ch % ncols].axis('off')
+        fig.supxlabel('Frequency (Hz)', fontsize=9)
+        fig.supylabel('Power Spectral Density (a.u.)', fontsize=9)
         fig.tight_layout()
         path = out_path.format(cond=name)
         fig.savefig(path, dpi=150)
