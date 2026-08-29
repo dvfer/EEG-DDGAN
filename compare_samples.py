@@ -22,9 +22,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from scipy.signal import welch
-from scipy.spatial.distance import jensenshannon
 
+from eeg_metrics import compute_psd, spectral_jsd, mmd_rbf, erp_peak_metrics
 from eeggan.helpers.dataloader import Dataloader
 from eeggan.helpers.visualize_pca import visualization_dim_reduction
 
@@ -137,16 +136,6 @@ def plot_erp_overlay(real_data, real_labels, gen_data, gen_labels, out_path):
         print(f'  Guardado: {path}')
 
 
-def spectral_jsd(freqs, psd_real, psd_gen, fmax=BP_HZ):
-    """Divergencia de Jensen-Shannon entre dos PSD, restringida a la banda real
-    [0, fmax] Hz. 0 = idénticas, 1 = máximamente distintas. Ref: signal_analysis.ipynb."""
-    mask = freqs <= fmax
-    p = psd_real[mask] + 1e-12
-    q = psd_gen[mask] + 1e-12
-    p, q = p / p.sum(), q / q.sum()
-    return float(jensenshannon(p, q) ** 2)
-
-
 def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=FS):
     """PSD (Welch) promedio por canal/condición, real vs sintético.
     Devuelve {(condición, canal): jsd} -- divergencia espectral en banda real."""
@@ -168,14 +157,12 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
                 trials = data[labels == cond][:, :, ch]
                 if trials.shape[0] == 0:
                     continue
-                nperseg = min(fs // 4, trials.shape[1])  # fs//4: mismo Welch que signal_analysis.ipynb
-                f, pxx = welch(trials, fs=fs, nperseg=nperseg, axis=1)
-                mean, std = pxx.mean(axis=0), pxx.std(axis=0)
+                f, mean, std = compute_psd(trials, fs)
                 means[label] = mean
                 ax.plot(f, mean, color=color, linestyle=style, label=label)
                 ax.fill_between(f, mean - std, mean + std, color=color, alpha=0.2)
             if 'Real' in means and 'Sintético' in means:
-                jsd_scores[(name, ch)] = spectral_jsd(f, means['Real'], means['Sintético'])
+                jsd_scores[(name, ch)] = spectral_jsd(f, means['Real'], means['Sintético'], fmax=BP_HZ)
             ax.axvline(BP_HZ, color='gray', linewidth=1, linestyle=':', label=f'Corte real ({BP_HZ} Hz)')
             ax.set_xlim(0, PSD_FMAX)
             ax.set_title(f'Canal {ch}', fontsize=8)
@@ -196,59 +183,48 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
     return jsd_scores
 
 
-def mmd_rbf(X, Y, n_sub=400, seed=42):
-    """MMD^2 no sesgado con kernel RBF (sigma por heurística de mediana).
-    Sub-samplea a n_sub para velocidad. Ref: signal_analysis.ipynb."""
-    rng = np.random.default_rng(seed)
-    if len(X) > n_sub:
-        X = X[rng.choice(len(X), n_sub, replace=False)]
-    if len(Y) > n_sub:
-        Y = Y[rng.choice(len(Y), n_sub, replace=False)]
+def compare_subject(subject, model_path=None, real_csv=None, gen_csv=None, plot_dir=None):
+    """Compara un checkpoint con los datos reales de un sujeto: genera muestras,
+    grafica ERP/PSD/PCA/t-SNE y devuelve un dict de métricas resumen.
 
-    combined = np.vstack([X, Y])
-    sq_dists = np.sum((combined[:, None] - combined[None, :]) ** 2, axis=-1)
-    sigma2 = np.median(sq_dists[sq_dists > 0])
-
-    def rbf(A, B):
-        d2 = np.sum((A[:, None] - B[None, :]) ** 2, axis=-1)
-        return np.exp(-d2 / (2 * sigma2))
-
-    kxx, kyy, kxy = rbf(X, X), rbf(Y, Y), rbf(X, Y)
-    n, m = len(X), len(Y)
-    np.fill_diagonal(kxx, 0)
-    np.fill_diagonal(kyy, 0)
-    return float(kxx.sum() / (n * (n - 1)) + kyy.sum() / (m * (m - 1)) - 2 * kxy.mean())
-
-
-def compare_subject(subject):
-    real_csv  = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')
-    model_pt  = os.path.join(GAN_DIR, f'{MODEL_PREFIX}_s{subject:03d}.pt')
-    gen_csv   = os.path.join(GEN_DIR, f'{MODEL_PREFIX}_s{subject:03d}_synthetic.csv')
+    Los 4 paths son opcionales — por defecto usan la convención de moabb_pipeline.py
+    (MODEL_PREFIX/GAN_DIR/etc). Parametrizables para que ablation_pipeline.py pueda
+    reusar esta misma función con checkpoints/carpetas de salida distintas.
+    """
+    if real_csv is None:
+        real_csv = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')
+    if model_path is None:
+        model_path = os.path.join(GAN_DIR, f'{MODEL_PREFIX}_s{subject:03d}.pt')
+    if gen_csv is None:
+        gen_csv = os.path.join(GEN_DIR, f'{MODEL_PREFIX}_s{subject:03d}_synthetic.csv')
+    if plot_dir is None:
+        plot_dir = PLOT_DIR
 
     if not os.path.exists(real_csv):
         print(f'  Aviso: no existe {real_csv}, se omite sujeto {subject}.')
-        return
-    if not os.path.exists(model_pt):
-        print(f'  Aviso: no existe {model_pt}, se omite sujeto {subject}.')
-        return
+        return None
+    if not os.path.exists(model_path):
+        print(f'  Aviso: no existe {model_path}, se omite sujeto {subject}.')
+        return None
 
-    os.makedirs(PLOT_DIR, exist_ok=True)
+    os.makedirs(plot_dir, exist_ok=True)
 
     print(f'  Generando muestras sintéticas -> {gen_csv}')
-    generate_synthetic(model_pt, real_csv, gen_csv)
+    generate_synthetic(model_path, real_csv, gen_csv)
 
     real_data, real_labels = load(real_csv, norm_data=True)
     gen_data, gen_labels   = load(gen_csv, norm_data=False)  # ya está en la escala normalizada del generador
 
     print('  Graficando ERP promedio (real vs sintético)...')
     plot_erp_overlay(real_data, real_labels, gen_data, gen_labels,
-                      os.path.join(PLOT_DIR, f's{subject:03d}_erp_{{cond}}.png'))
+                      os.path.join(plot_dir, f's{subject:03d}_erp_{{cond}}.png'))
 
     print('  Graficando PSD (Welch)...')
     jsd_scores = plot_psd_overlay(real_data, real_labels, gen_data, gen_labels,
-                                   os.path.join(PLOT_DIR, f's{subject:03d}_psd_{{cond}}.png'))
+                                   os.path.join(plot_dir, f's{subject:03d}_psd_{{cond}}.png'))
 
     print(f'  Métricas de fidelidad espectral/distribucional (sujeto {subject}):')
+    mmd_vals, amp_errs, lat_errs = [], [], []
     for name, cond in CONDITIONS.items():
         cond_jsd = [v for (n, _ch), v in jsd_scores.items() if n == name]
         if cond_jsd:
@@ -257,20 +233,39 @@ def compare_subject(subject):
 
         real_c = real_data[real_labels == cond].reshape(-1, real_data.shape[1] * real_data.shape[2])
         gen_c  = gen_data[gen_labels == cond].reshape(-1, gen_data.shape[1] * gen_data.shape[2])
-        if len(real_c) < 4 or len(gen_c) < 4:
-            continue
-        half = len(real_c) // 2
-        baseline = mmd_rbf(real_c[:half], real_c[half:])
-        mmd_val = mmd_rbf(real_c, gen_c)
-        print(f'    MMD² {name}: real-vs-sintético={mmd_val:.6f}  (baseline real/real split={baseline:.6f}, esperado ~0)')
+        if len(real_c) >= 4 and len(gen_c) >= 4:
+            half = len(real_c) // 2
+            baseline = mmd_rbf(real_c[:half], real_c[half:])
+            mmd_val = mmd_rbf(real_c, gen_c)
+            mmd_vals.append(mmd_val)
+            print(f'    MMD² {name}: real-vs-sintético={mmd_val:.6f}  (baseline real/real split={baseline:.6f}, esperado ~0)')
+
+        # Pico ERP (P300) por canal, promediado — ver eeg_metrics.erp_peak_metrics
+        real_cond, gen_cond = real_data[real_labels == cond], gen_data[gen_labels == cond]
+        if len(real_cond) and len(gen_cond):
+            for ch in range(real_cond.shape[-1]):
+                amp_err, lat_err = erp_peak_metrics(real_cond[:, :, ch], gen_cond[:, :, ch], fs=FS)
+                amp_errs.append(amp_err)
+                lat_errs.append(lat_err)
+
+    if amp_errs:
+        print(f'    Pico ERP (250-600ms): error amplitud media={np.mean(amp_errs):.4f}, '
+              f'error latencia media={np.mean(lat_errs):.1f}ms')
 
     print('  Graficando PCA...')
     visualization_dim_reduction(real_data, gen_data, 'pca', save=True,
-                                 save_name=os.path.join(PLOT_DIR, f's{subject:03d}_pca.png'))
+                                 save_name=os.path.join(plot_dir, f's{subject:03d}_pca.png'))
 
     print('  Graficando t-SNE...')
     visualization_dim_reduction(real_data, gen_data, 'tsne', save=True,
-                                 save_name=os.path.join(PLOT_DIR, f's{subject:03d}_tsne.png'))
+                                 save_name=os.path.join(plot_dir, f's{subject:03d}_tsne.png'))
+
+    return {
+        'jsd_mean': float(np.mean(list(jsd_scores.values()))) if jsd_scores else float('nan'),
+        'mmd2': float(np.mean(mmd_vals)) if mmd_vals else float('nan'),
+        'erp_amp_err': float(np.mean(amp_errs)) if amp_errs else float('nan'),
+        'erp_lat_err_ms': float(np.mean(lat_errs)) if lat_errs else float('nan'),
+    }
 
 
 def main():
