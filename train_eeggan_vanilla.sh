@@ -71,8 +71,10 @@ uv pip install -e . --python .venv
 # aunque no se use el discriminador DWT. A su vez usa pkg_resources
 # (setuptools), que uv venv no incluye por defecto (a diferencia de un venv
 # armado con pip clásico). setuptools>=81 sacó pkg_resources (deprecado
-# desde 2025-11-30) -- hay que fijar una versión anterior.
-uv pip install "setuptools<81" pytorch_wavelets --python .venv
+# desde 2025-11-30) -- hay que fijar una versión anterior. PyWavelets
+# (pywt) es a su vez una dependencia de pytorch_wavelets que su propio
+# paquete no declara.
+uv pip install "setuptools<81" pytorch_wavelets PyWavelets --python .venv
 PY=".venv/bin/python"
 
 AE_CKPT="trained_ae/${AE_NAME}.pt"
