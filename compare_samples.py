@@ -27,7 +27,8 @@ from eeg_metrics import compute_psd, spectral_jsd, mmd_rbf, erp_peak_metrics
 from eeggan.helpers.dataloader import Dataloader
 from eeggan.helpers.visualize_pca import visualization_dim_reduction
 
-DATA_DIR  = 'subject_data/train'
+DATA_DIR      = 'subject_data/train'    # usado para entrenar (y como fallback si no hay test)
+TEST_DATA_DIR = 'subject_data/test'     # held-out — lo que se usa como "real" para las métricas
 GAN_DIR   = 'trained_models'
 GEN_DIR   = 'generated_samples'
 PLOT_DIR  = 'comparison_plots'
@@ -87,12 +88,30 @@ def generate_synthetic(model_path, real_csv, out_csv):
     return out_csv
 
 
-def load(csv_path, norm_data):
-    dl = Dataloader(path=csv_path, norm_data=norm_data,
-                     kw_time='Time', kw_conditions='Condition', kw_channel='Electrode')
-    data = dl.get_data(shuffle=False)[:, 1:].numpy()       # (trial, seq, channel)
+def load(csv_path, norm_data, norm_min=None, norm_max=None):
+    """norm_min/norm_max: si se dan, normaliza con ESTOS valores en vez de los
+    propios del csv (para comparar el held-out de test en la misma escala en la
+    que el generador vio los datos de train — ver train_norm_stats())."""
+    if norm_min is not None:
+        dl = Dataloader(path=csv_path, norm_data=False,
+                         kw_time='Time', kw_conditions='Condition', kw_channel='Electrode')
+        data = dl.get_data(shuffle=False)[:, 1:].numpy()
+        data = (data - norm_min) / (norm_max - norm_min)
+    else:
+        dl = Dataloader(path=csv_path, norm_data=norm_data,
+                         kw_time='Time', kw_conditions='Condition', kw_channel='Electrode')
+        data = dl.get_data(shuffle=False)[:, 1:].numpy()       # (trial, seq, channel)
     labels = dl.get_labels()[:, 0, 0].numpy()              # (trial,)
     return data, labels
+
+
+def train_norm_stats(train_csv):
+    """Min/max del CSV de train — la misma escala que Dataloader(norm_data=True)
+    le dio al generador durante el entrenamiento (ver dataloader.py: dataset_min/
+    dataset_max se calculan siempre, se apliquen o no)."""
+    dl = Dataloader(path=train_csv, norm_data=False,
+                     kw_time='Time', kw_conditions='Condition', kw_channel='Electrode')
+    return dl.dataset_min.item(), dl.dataset_max.item()
 
 
 def _long_df(data_2d, tipo_senal):
@@ -183,36 +202,68 @@ def plot_psd_overlay(real_data, real_labels, gen_data, gen_labels, out_path, fs=
     return jsd_scores
 
 
-def compare_subject(subject, model_path=None, real_csv=None, gen_csv=None, plot_dir=None):
-    """Compara un checkpoint con los datos reales de un sujeto: genera muestras,
-    grafica ERP/PSD/PCA/t-SNE y devuelve un dict de métricas resumen.
+def compare_subject(subject, model_path=None, real_csv=None, train_csv=None, gen_csv=None,
+                     plot_dir=None, skip_generation=False):
+    """Compara un checkpoint con los datos HELD-OUT (test) de un sujeto: genera
+    muestras, grafica ERP/PSD/PCA/t-SNE y devuelve un dict de métricas resumen.
 
-    Los 4 paths son opcionales — por defecto usan la convención de moabb_pipeline.py
-    (MODEL_PREFIX/GAN_DIR/etc). Parametrizables para que ablation_pipeline.py pueda
-    reusar esta misma función con checkpoints/carpetas de salida distintas.
+    Los paths son opcionales — por defecto usan la convención de moabb_pipeline.py
+    (MODEL_PREFIX/GAN_DIR/DATA_DIR/TEST_DATA_DIR/etc). Parametrizables para que
+    ablation_pipeline.py pueda reusar esta misma función con checkpoints/carpetas
+    de salida distintas.
+
+    real_csv: CSV de evaluación (por defecto, el held-out de TEST_DATA_DIR — el
+    generador nunca lo vio en entrenamiento).
+    train_csv: CSV de entrenamiento (por defecto, DATA_DIR) — se usa SOLO para
+    tomar el min/max con el que normalizar real_csv, así el "real" de test queda
+    en la MISMA escala en la que el generador vio los datos de train (si cada CSV
+    se normalizara con su propio min/max, la comparación quedaría ligeramente
+    desalineada en escala). Si no existe, cae a normalizar con el min/max propio
+    de real_csv (con aviso).
+
+    skip_generation=True: no entrena/genera nada, usa el `gen_csv` ya existente tal
+    cual (debe pasarse explícitamente). Para evaluar checkpoints de otra rama/repo
+    (ej. EEG-GAN vanilla en `main`) cuyo formato esta rama no puede cargar — ver
+    eval_external_config.py.
     """
     if real_csv is None:
-        real_csv = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')
-    if model_path is None:
-        model_path = os.path.join(GAN_DIR, f'{MODEL_PREFIX}_s{subject:03d}.pt')
-    if gen_csv is None:
-        gen_csv = os.path.join(GEN_DIR, f'{MODEL_PREFIX}_s{subject:03d}_synthetic.csv')
+        real_csv = os.path.join(TEST_DATA_DIR, f'subject_{subject:03d}.csv')
+    if train_csv is None:
+        train_csv = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')
     if plot_dir is None:
         plot_dir = PLOT_DIR
 
     if not os.path.exists(real_csv):
         print(f'  Aviso: no existe {real_csv}, se omite sujeto {subject}.')
         return None
-    if not os.path.exists(model_path):
-        print(f'  Aviso: no existe {model_path}, se omite sujeto {subject}.')
-        return None
 
-    os.makedirs(plot_dir, exist_ok=True)
+    if skip_generation:
+        if gen_csv is None or not os.path.exists(gen_csv):
+            print(f'  Aviso: skip_generation=True pero no existe gen_csv={gen_csv}.')
+            return None
+        os.makedirs(plot_dir, exist_ok=True)
+        print(f'  Usando muestras sintéticas ya generadas -> {gen_csv}')
+    else:
+        if model_path is None:
+            model_path = os.path.join(GAN_DIR, f'{MODEL_PREFIX}_s{subject:03d}.pt')
+        if gen_csv is None:
+            gen_csv = os.path.join(GEN_DIR, f'{MODEL_PREFIX}_s{subject:03d}_synthetic.csv')
+        if not os.path.exists(model_path):
+            print(f'  Aviso: no existe {model_path}, se omite sujeto {subject}.')
+            return None
 
-    print(f'  Generando muestras sintéticas -> {gen_csv}')
-    generate_synthetic(model_path, real_csv, gen_csv)
+        os.makedirs(plot_dir, exist_ok=True)
 
-    real_data, real_labels = load(real_csv, norm_data=True)
+        print(f'  Generando muestras sintéticas -> {gen_csv}')
+        generate_synthetic(model_path, real_csv, gen_csv)
+
+    if os.path.exists(train_csv):
+        norm_min, norm_max = train_norm_stats(train_csv)
+    else:
+        print(f'  Aviso: no existe train_csv={train_csv}; normalizando el held-out con su propio '
+              f'min/max (puede no coincidir exactamente con la escala del generador).')
+        norm_min, norm_max = None, None
+    real_data, real_labels = load(real_csv, norm_data=True, norm_min=norm_min, norm_max=norm_max)
     gen_data, gen_labels   = load(gen_csv, norm_data=False)  # ya está en la escala normalizada del generador
 
     print('  Graficando ERP promedio (real vs sintético)...')

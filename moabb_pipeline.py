@@ -34,7 +34,9 @@ CONDITION = 'Both'
 NORM = False
 
 # Directorios de salida
-DATA_DIR = 'subject_data/train'
+DATA_DIR      = 'subject_data/train'
+TEST_DATA_DIR = 'subject_data/test'   # held-out, nunca visto en entrenamiento (evaluación)
+TEST_SIZE     = 0.2                    # fracción de trials para el held-out set
 GAN_DIR  = 'trained_models'
 
 # Prefijo para los archivos de modelo
@@ -248,6 +250,7 @@ def main():
     paradigm = P300()
 
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(TEST_DATA_DIR, exist_ok=True)
     os.makedirs(GAN_DIR,  exist_ok=True)
 
     for subject in args.subjects:
@@ -256,13 +259,16 @@ def main():
         print(f'{"="*55}')
 
         # Rutas de archivos
-        csv_path      = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')
+        csv_path      = os.path.join(DATA_DIR, f'subject_{subject:03d}.csv')       # 80% train
+        test_csv_path = os.path.join(TEST_DATA_DIR, f'subject_{subject:03d}.csv')  # 20% held-out
         gan_save_path = os.path.join(GAN_DIR,  f'{MODEL_PREFIX}_s{subject:03d}.pt')
 
-        # 1. Exportar CSV (se omite si ya existe)
-        if os.path.exists(csv_path):
-            print(f'  CSV ya existe, se omite la exportación: {csv_path}')
+        # 1. Exportar CSVs train/test (se omite si ambos ya existen)
+        if os.path.exists(csv_path) and os.path.exists(test_csv_path):
+            print(f'  CSVs ya existen (train+test), se omite la exportación: {csv_path}')
         else:
+            from sklearn.model_selection import train_test_split
+
             print('  Cargando datos MOABB...')
             X, y, _ = paradigm.get_data(dataset=dataset, subjects=[subject])
             ch_names = get_channel_names(dataset, subject)
@@ -272,11 +278,29 @@ def main():
                 ch_names = [f'Ch{i}' for i in range(n_ch)]
 
             print(f'  Shape: {X.shape} | Canales: {ch_names[:5]}{"..." if n_ch > 5 else ""}')
-            print('  Exportando CSV...')
+
+            # Split 80/20 estratificado por condición, ANTES de exportar — el
+            # generador nunca debe entrenar con trials del held-out de test.
+            idx = np.arange(X.shape[0])
+            idx_train, idx_test = train_test_split(
+                idx, test_size=TEST_SIZE, stratify=_to_int_labels(y), random_state=GAN_SEED
+            )
+            print(f'  Split train/test: {len(idx_train)}/{len(idx_test)} trials '
+                  f'({1 - TEST_SIZE:.0%}/{TEST_SIZE:.0%}, estratificado, seed={GAN_SEED})')
+
+            print('  Exportando CSV de train...')
             export_to_csv(
-                X, y, ch_names,
+                X[idx_train], y[idx_train], ch_names,
                 condition=CONDITION,
                 output_path=csv_path,
+                norm=NORM,
+                patch_size=GAN_PATCH_SIZE,
+            )
+            print('  Exportando CSV de test (held-out)...')
+            export_to_csv(
+                X[idx_test], y[idx_test], ch_names,
+                condition=CONDITION,
+                output_path=test_csv_path,
                 norm=NORM,
                 patch_size=GAN_PATCH_SIZE,
             )
