@@ -80,17 +80,31 @@ PY=".venv/bin/python"
 AE_CKPT="trained_ae/${AE_NAME}.pt"
 GAN_CKPT="trained_models/${GAN_NAME}.pt"
 
+# Invocamos cada eeggan.*_main.main() directamente (como ya hace
+# moabb_pipeline.py/compare_samples.py) en vez de `python -m eeggan`:
+# eeggan/__main__.py importa TODOS los comandos a nivel de módulo apenas se
+# lo carga, así que arrastra dependencias de comandos que ni usamos (ej.
+# `requests`, que solo necesita setup_tutorial) sin necesidad real.
+
 echo ""
 echo "=== 1. Autoencoder (target=full, channels_out=${CHANNELS_OUT}, time_out=${TIME_OUT}) ==="
 if [[ -f "$AE_CKPT" ]]; then
     echo "  Ya existe $AE_CKPT, se omite entrenamiento."
 else
-    "$PY" -m eeggan autoencoder_training \
-        data="$TRAIN_CSV" \
-        kw_channel=Electrode kw_time=Time \
-        target=full channels_out="$CHANNELS_OUT" time_out="$TIME_OUT" \
-        n_epochs="$N_EPOCHS_AE" seed="$SEED" \
-        save_name="$AE_NAME"
+    "$PY" - <<PYEOF
+from eeggan.autoencoder_training_main import main
+main([
+    "data=$TRAIN_CSV",
+    "kw_channel=Electrode",
+    "kw_time=Time",
+    "target=full",
+    "channels_out=$CHANNELS_OUT",
+    "time_out=$TIME_OUT",
+    "n_epochs=$N_EPOCHS_AE",
+    "seed=$SEED",
+    "save_name=$AE_NAME",
+])
+PYEOF
 fi
 
 echo ""
@@ -98,12 +112,20 @@ echo "=== 2. GAN vanilla (AE-coupled, sin DWT/PostNet/stacking) ==="
 if [[ -f "$GAN_CKPT" ]]; then
     echo "  Ya existe $GAN_CKPT, se omite entrenamiento."
 else
-    "$PY" -m eeggan gan_training \
-        data="$TRAIN_CSV" \
-        kw_channel=Electrode kw_conditions=Condition kw_time=Time \
-        patch_size="$PATCH_SIZE" n_epochs="$N_EPOCHS_GAN" seed="$SEED" \
-        autoencoder="$AE_CKPT" \
-        save_name="$GAN_NAME"
+    "$PY" - <<PYEOF
+from eeggan.gan_training_main import main
+main([
+    "data=$TRAIN_CSV",
+    "kw_channel=Electrode",
+    "kw_conditions=Condition",
+    "kw_time=Time",
+    "patch_size=$PATCH_SIZE",
+    "n_epochs=$N_EPOCHS_GAN",
+    "seed=$SEED",
+    "autoencoder=$AE_CKPT",
+    "save_name=$GAN_NAME",
+])
+PYEOF
 fi
 
 echo ""
@@ -113,13 +135,29 @@ N_TARGET=$("$PY" -c "import pandas as pd; df=pd.read_csv('$TEST_CSV'); print(df[
 N_NONTARGET=$("$PY" -c "import pandas as pd; df=pd.read_csv('$TEST_CSV'); print(df[df.Condition==0]['Trial'].nunique())")
 echo "  Test set real: Target=${N_TARGET}, NonTarget=${N_NONTARGET}"
 
-"$PY" -m eeggan generate_samples \
-    model="$GAN_CKPT" save_name=_tmp_target.csv \
-    conditions=1 num_samples_total="$N_TARGET" num_samples_parallel="$N_TARGET" sequence_length=-1
+"$PY" - <<PYEOF
+from eeggan.generate_samples_main import main
+main([
+    "model=$GAN_CKPT",
+    "save_name=_tmp_target.csv",
+    "conditions=1",
+    "num_samples_total=$N_TARGET",
+    "num_samples_parallel=$N_TARGET",
+    "sequence_length=-1",
+])
+PYEOF
 
-"$PY" -m eeggan generate_samples \
-    model="$GAN_CKPT" save_name=_tmp_nontarget.csv \
-    conditions=0 num_samples_total="$N_NONTARGET" num_samples_parallel="$N_NONTARGET" sequence_length=-1
+"$PY" - <<PYEOF
+from eeggan.generate_samples_main import main
+main([
+    "model=$GAN_CKPT",
+    "save_name=_tmp_nontarget.csv",
+    "conditions=0",
+    "num_samples_total=$N_NONTARGET",
+    "num_samples_parallel=$N_NONTARGET",
+    "sequence_length=-1",
+])
+PYEOF
 
 OUT_CSV="${REPO_ROOT}/generated_samples/EEG_GAN_vanilla_s${SUBJECT_FMT}_synthetic.csv"
 mkdir -p "${REPO_ROOT}/generated_samples"
