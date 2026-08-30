@@ -70,8 +70,9 @@ uv pip install -e . --python .venv
 # -- models.py la importa a nivel de módulo sin condicionarla, hace falta
 # aunque no se use el discriminador DWT. A su vez usa pkg_resources
 # (setuptools), que uv venv no incluye por defecto (a diferencia de un venv
-# armado con pip clásico).
-uv pip install setuptools pytorch_wavelets --python .venv
+# armado con pip clásico). setuptools>=81 sacó pkg_resources (deprecado
+# desde 2025-11-30) -- hay que fijar una versión anterior.
+uv pip install "setuptools<81" pytorch_wavelets --python .venv
 PY=".venv/bin/python"
 
 AE_CKPT="trained_ae/${AE_NAME}.pt"
