@@ -66,6 +66,10 @@ cd "$WORKTREE_DIR"
 #   rm -rf .venv
 [[ -d .venv ]] || uv venv --python 3.11
 uv pip install -e . --python .venv
+# pytorch_wavelets: dependencia no declarada en pyproject.toml (ver CLAUDE.md)
+# -- models.py la importa a nivel de módulo sin condicionarla, hace falta
+# aunque no se use el discriminador DWT.
+uv pip install pytorch_wavelets --python .venv
 PY=".venv/bin/python"
 
 AE_CKPT="trained_ae/${AE_NAME}.pt"
