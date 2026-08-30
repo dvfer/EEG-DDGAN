@@ -120,7 +120,14 @@ import eeggan.nn_architecture.models as _models
 _N_COND = 1  # columnas de kw_conditions (Condition = 1)
 def _patched_encdisc_forward(self, data):
     if self.encode:
-        raw, cond = data[..., :-_N_COND], data[..., -_N_COND:]
+        input_data = data
+        # el gradient penalty (losses.py) llama al discriminador con un tensor
+        # 4D (batch, canales, 1, tiempo) -- el forward original lo deshace asi
+        # antes de encodear; si no replicamos este paso, el slice de abajo
+        # corta el eje de TIEMPO en vez del canal de condicion.
+        if input_data.dim() == 4:
+            input_data = input_data.permute(0, 3, 2, 1).squeeze(2)
+        raw, cond = input_data[..., :-_N_COND], input_data[..., -_N_COND:]
         encoded = self.encoder.encode(raw)
         encoded = torch.cat([encoded, cond], dim=-1)
         return self.discriminator(encoded)
