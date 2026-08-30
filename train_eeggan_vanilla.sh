@@ -144,6 +144,18 @@ echo "  Test set real: Target=${N_TARGET}, NonTarget=${N_NONTARGET}"
 "$PY" - <<PYEOF
 import functools, torch
 torch.load = functools.partial(torch.load, weights_only=False)  # ver nota: generate_samples_main.py de main no lo fija, a diferencia de gan_training_main.py; torch>=2.6 cambio el default
+
+# init_gan() devuelve 3 valores (generator, discriminator, discriminator2 -- por
+# el soporte DWT mezclado en main), pero generate_samples_main.py quedo viejo y
+# espera 2 (generator, _ = init_gan(...)). Parcheamos para recortar a 2 antes de
+# que generate_samples_main haga su propio "from ...initialize_gan import init_gan".
+import eeggan.helpers.initialize_gan as _ig
+_orig_init_gan = _ig.init_gan
+def _init_gan_2tuple(*a, **kw):
+    result = _orig_init_gan(*a, **kw)
+    return result[:2] if len(result) > 2 else result
+_ig.init_gan = _init_gan_2tuple
+
 from eeggan.generate_samples_main import main
 main([
     "model=$GAN_CKPT",
@@ -158,6 +170,18 @@ PYEOF
 "$PY" - <<PYEOF
 import functools, torch
 torch.load = functools.partial(torch.load, weights_only=False)  # ver nota: generate_samples_main.py de main no lo fija, a diferencia de gan_training_main.py; torch>=2.6 cambio el default
+
+# init_gan() devuelve 3 valores (generator, discriminator, discriminator2 -- por
+# el soporte DWT mezclado en main), pero generate_samples_main.py quedo viejo y
+# espera 2 (generator, _ = init_gan(...)). Parcheamos para recortar a 2 antes de
+# que generate_samples_main haga su propio "from ...initialize_gan import init_gan".
+import eeggan.helpers.initialize_gan as _ig
+_orig_init_gan = _ig.init_gan
+def _init_gan_2tuple(*a, **kw):
+    result = _orig_init_gan(*a, **kw)
+    return result[:2] if len(result) > 2 else result
+_ig.init_gan = _init_gan_2tuple
+
 from eeggan.generate_samples_main import main
 main([
     "model=$GAN_CKPT",
