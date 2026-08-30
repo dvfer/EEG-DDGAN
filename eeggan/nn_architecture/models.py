@@ -72,15 +72,20 @@ class EncoderDiscriminator(Discriminator):
     Otherwise, it returns the output of the discriminator.
     """
 
-    def __init__(self, discriminator: Discriminator, encoder: Autoencoder):
+    def __init__(self, discriminator: Discriminator, encoder: Autoencoder, n_conditions: int = 0):
         """
         :param discriminator: discriminator model
         :param encoder: autoencoder model that has an encode method
+        :param n_conditions: number of condition columns concatenated onto the channel axis of
+            `data` in forward(). The encoder's channel-facing layers are sized from AE-training
+            time (no condition columns present then), so conditions are split off before encode()
+            and reattached to the encoded result -- otherwise encode() breaks on the width mismatch.
         """
         super(EncoderDiscriminator, self).__init__()
         self.discriminator = discriminator
         self.encoder = encoder
         self.encode = True
+        self.n_conditions = n_conditions
 
         # add attributes from discriminator
         self.channels = discriminator.channels if hasattr(discriminator, 'channels') else None
@@ -91,7 +96,18 @@ class EncoderDiscriminator(Discriminator):
             input_data = data
             if input_data.dim() == 4:
                 input_data = input_data.permute(0, 3, 2, 1).squeeze(2)
-            return self.discriminator(self.encoder.encode(input_data))
+            if self.n_conditions > 0:
+                raw, cond = input_data[..., :-self.n_conditions], input_data[..., -self.n_conditions:]
+                encoded = self.encoder.encode(raw)
+                # cond is constant across the sequence axis (same condition value at every timestep);
+                # encode() may itself change the sequence length (e.g. target=full's timeseries sub-AE
+                # goes time_in -> time_out), so re-broadcast from a single step instead of assuming the
+                # original length still matches.
+                cond = cond[:, :1, :].expand(-1, encoded.shape[1], -1)
+                encoded = torch.cat([encoded, cond], dim=-1)
+            else:
+                encoded = self.encoder.encode(input_data)
+            return self.discriminator(encoded)
         else:
             return self.discriminator(data)
 

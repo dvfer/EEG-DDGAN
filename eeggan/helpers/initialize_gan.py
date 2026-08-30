@@ -123,7 +123,8 @@ def init_gan(latent_dim_in,
                 # additional TTSDiscriminator inputs: patch_size
                 patch_size=patch_size,
             ),
-            encoder=autoencoder
+            encoder=autoencoder,
+            n_conditions=n_conditions
         )
 
         if isinstance(discriminator, EncoderDiscriminator) and isinstance(generator, DecoderGenerator) and input_sequence_length == 0:
