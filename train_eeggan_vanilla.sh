@@ -66,6 +66,13 @@ cd "$WORKTREE_DIR"
 #   rm -rf .venv
 [[ -d .venv ]] || uv venv --python 3.11
 uv pip install -e . --python .venv
+# main's pyproject.toml no tiene el [tool.uv.sources]/[tool.uv.index] que sí
+# tiene ttsgan-direct apuntando torch al build CUDA (cu128) -- sin esto cae
+# al wheel default de PyPI, que no trae kernels para GPUs nuevas ("no kernel
+# image is available for execution on the device"). Forzamos el mismo índice
+# que ya sabemos que funciona en esta máquina.
+uv pip install --index-url https://download.pytorch.org/whl/cu128 \
+    "torch>=2.7,<3.0" "torchvision>=0.22,<1.0" "torchaudio>=2.7,<3.0" --python .venv
 # pytorch_wavelets: dependencia no declarada en pyproject.toml (ver CLAUDE.md)
 # -- models.py la importa a nivel de módulo sin condicionarla, hace falta
 # aunque no se use el discriminador DWT. A su vez usa pkg_resources
