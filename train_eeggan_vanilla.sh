@@ -39,8 +39,11 @@ SEED=42
 TIME_OUT=50
 PATCH_SIZE=10
 
-AE_NAME="AE_vanilla_s${SUBJECT_FMT}"
-GAN_NAME="EEG_GAN_vanilla_s${SUBJECT_FMT}"
+# "_time" en el nombre: si alguna vez cambiás target= acá, un checkpoint
+# viejo (ej. entrenado con target=full) no se reusa en silencio con la
+# config nueva -- ver el mismatch de canales que documentamos arriba.
+AE_NAME="AE_vanilla_time_s${SUBJECT_FMT}"
+GAN_NAME="EEG_GAN_vanilla_time_s${SUBJECT_FMT}"
 
 WORKTREE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../EEG-DDGAN-main-vanilla"
 # ─────────────────────────────────────────────────────────────────────────
