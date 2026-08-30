@@ -60,7 +60,11 @@ cd "$WORKTREE_DIR"
 # >=3.9) -- explota buscando compatibilidad con 3.7/3.8 que ni usamos.
 # uv venv + uv pip install resuelven solo para el intérprete concreto, evita
 # ese choque sin tocar el pyproject.toml de main.
-[[ -d .venv ]] || uv venv
+# --python 3.11: torch==2.3.1 (el que fija eeggan==2.0.2) no tiene wheels
+# para 3.13+; uv descarga/gestiona el 3.11 solo, no depende del python del
+# sistema/conda. Si un intento previo dejó un .venv roto, borralo primero:
+#   rm -rf .venv
+[[ -d .venv ]] || uv venv --python 3.11
 uv pip install -e . --python .venv
 PY=".venv/bin/python"
 
