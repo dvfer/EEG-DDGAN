@@ -7,20 +7,23 @@
 # Receta base calcada de train_autoencoders.sh/train_vanilla_gan.sh (ya
 # probados funcionando): AE + GAN condicional directo sobre ese mismo AE.
 #
-# target= (segundo argumento, default "time"): "time" y "channels" andan.
-# "full" NO -- tiene un bug distinto (mismatch de tiempo 50 vs 64 en la
-# composición interna de dos niveles model_1/model_2), no resuelto, no lo uses.
+# target= (segundo argumento, default "time"): "time", "channels" y "full"
+# andan los tres -- ver openspec/changes/fix-full-target-ae-gan-conditions/.
 #
-# Por qué target=channels necesita un parche y target=time no: main pega la
-# condición como canal extra ANTES de encodear (EncoderDiscriminator.forward:
-# encoder.encode(canal_crudo+condición)). Con target=time el AE opera sobre el
-# eje temporal (agnóstico al conteo de canales) así que no importa. Con
-# target=channels, el AE tiene una capa Linear fija al conteo de canales
-# CRUDO -- rompe con el canal de condición pegado encima (mismatch 16 vs 17).
-# Se parchea separando la condición antes de encodear y pegándola después
-# (init_gan ya dimensiona el discriminador para channels_out+condiciones, así
-# que el parche calza sin tocar nada más) -- verificado con tensores dummy
-# contra el código real de main antes de meterlo acá.
+# Por qué target=channels y target=full necesitaban (y ya no necesitan) un
+# parche: main pega la condición como canal extra ANTES de encodear
+# (EncoderDiscriminator.forward: encoder.encode(canal_crudo+condición)). Con
+# target=time el AE opera sobre el eje temporal (agnóstico al conteo de
+# canales) así que no importa. Con target=channels/full, el AE tiene una capa
+# Linear fija al conteo de canales CRUDO -- rompe con el canal de condición
+# pegado encima (mismatch 16 vs 17). Y con target=full específicamente, el
+# encode también cambia el largo de la secuencia (time_in -> time_out), así
+# que ni siquiera alcanza con separar el canal de condición: hay que
+# re-transmitirlo al nuevo largo (la condición es constante en el tiempo, así
+# que repetirla es correcto). Este parche ya está aplicado directamente en
+# EncoderDiscriminator.forward (eeggan/nn_architecture/models.py de `main`,
+# ver openspec/changes/fix-full-target-ae-gan-conditions/) -- no hace falta
+# inyectarlo desde este script.
 #
 # Usa `main` del fork (no el upstream real AutoResearch/EEG-GAN): el upstream
 # puro tiene el orden de EncoderDiscriminator.forward() invertido/roto
@@ -32,13 +35,14 @@
 # Uso:
 #   ./train_eeggan_vanilla.sh [subject_id] [target]   # default: 1 time
 #   ./train_eeggan_vanilla.sh 1 channels
+#   ./train_eeggan_vanilla.sh 1 full
 
 set -euo pipefail
 
 # ── CONFIGURACIÓN (ajustar antes de correr) ─────────────────────────────
 SUBJECT="${1:-1}"
 SUBJECT_FMT=$(printf "%03d" "$SUBJECT")
-TARGET="${2:-time}"   # time | channels (full: no funciona, ver nota arriba)
+TARGET="${2:-time}"   # time | channels | full
 
 # Presupuesto de entrenamiento -- alinealo con ABLATION_N_EPOCHS de
 # ablation_pipeline.py si querés que la comparación sea de presupuesto parejo.
@@ -73,11 +77,6 @@ if [[ ! -f "$TEST_CSV" ]]; then
     echo "No existe $TEST_CSV -- corré moabb_pipeline.py --subjects $SUBJECT primero (en ttsgan-direct)." >&2
     exit 1
 fi
-if [[ "$TARGET" == "full" ]]; then
-    echo "target=full no funciona (bug de composición de dos niveles, no relacionado a condiciones) -- usá time o channels." >&2
-    exit 1
-fi
-
 echo "=== Preparando worktree de 'main' en $WORKTREE_DIR ==="
 if [[ ! -d "$WORKTREE_DIR" ]]; then
     git worktree add "$WORKTREE_DIR" main
@@ -107,34 +106,6 @@ PY=".venv/bin/python"
 
 AE_CKPT="trained_ae/${AE_NAME}.pt"
 GAN_CKPT="trained_models/${GAN_NAME}.pt"
-
-# Parche de EncoderDiscriminator (ver nota arriba) -- solo hace falta cuando
-# target != time. Se inyecta como texto dentro del heredoc de entrenamiento
-# de la GAN, antes del import de gan_training_main.
-if [[ "$TARGET" == "time" ]]; then
-    DISC_PATCH=""
-else
-    DISC_PATCH='
-import torch
-import eeggan.nn_architecture.models as _models
-_N_COND = 1  # columnas de kw_conditions (Condition = 1)
-def _patched_encdisc_forward(self, data):
-    if self.encode:
-        input_data = data
-        # el gradient penalty (losses.py) llama al discriminador con un tensor
-        # 4D (batch, canales, 1, tiempo) -- el forward original lo deshace asi
-        # antes de encodear; si no replicamos este paso, el slice de abajo
-        # corta el eje de TIEMPO en vez del canal de condicion.
-        if input_data.dim() == 4:
-            input_data = input_data.permute(0, 3, 2, 1).squeeze(2)
-        raw, cond = input_data[..., :-_N_COND], input_data[..., -_N_COND:]
-        encoded = self.encoder.encode(raw)
-        encoded = torch.cat([encoded, cond], dim=-1)
-        return self.discriminator(encoded)
-    return self.discriminator(data)
-_models.EncoderDiscriminator.forward = _patched_encdisc_forward
-'
-fi
 
 # Invocamos eeggan.*_main.main() directamente (como ya hace moabb_pipeline.py/
 # compare_samples.py) en vez de `python -m eeggan`, que importa TODOS los
@@ -166,7 +137,6 @@ if [[ -f "$GAN_CKPT" ]]; then
     echo "  Ya existe $GAN_CKPT, se omite entrenamiento."
 else
     "$PY" - <<PYEOF
-$DISC_PATCH
 from eeggan.gan_training_main import main
 main([
     "data=$TRAIN_CSV",
@@ -197,7 +167,7 @@ torch.load = functools.partial(torch.load, weights_only=False)  # ver nota: gene
 # espera 2 (generator, _ = init_gan(...)). Parcheamos para recortar a 2 antes de
 # que generate_samples_main haga su propio "from ...initialize_gan import init_gan".
 # (la generación usa solo el generador, no el discriminador -- el parche de
-# EncoderDiscriminator de arriba no hace falta acá.)
+# EncoderDiscriminator, ahora en models.py, no aplica acá de todos modos.)
 import eeggan.helpers.initialize_gan as _ig
 _orig_init_gan = _ig.init_gan
 def _init_gan_2tuple(*a, **kw):
