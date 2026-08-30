@@ -142,6 +142,8 @@ N_NONTARGET=$("$PY" -c "import pandas as pd; df=pd.read_csv('$TEST_CSV'); print(
 echo "  Test set real: Target=${N_TARGET}, NonTarget=${N_NONTARGET}"
 
 "$PY" - <<PYEOF
+import functools, torch
+torch.load = functools.partial(torch.load, weights_only=False)  # ver nota: generate_samples_main.py de main no lo fija, a diferencia de gan_training_main.py; torch>=2.6 cambio el default
 from eeggan.generate_samples_main import main
 main([
     "model=$GAN_CKPT",
@@ -154,6 +156,8 @@ main([
 PYEOF
 
 "$PY" - <<PYEOF
+import functools, torch
+torch.load = functools.partial(torch.load, weights_only=False)  # ver nota: generate_samples_main.py de main no lo fija, a diferencia de gan_training_main.py; torch>=2.6 cambio el default
 from eeggan.generate_samples_main import main
 main([
     "model=$GAN_CKPT",
