@@ -25,5 +25,5 @@
 
 ## 6. End-to-end validation on GPU box
 
-- [ ] 6.1 Run `./train_eeggan_vanilla.sh 1 full` on the GPU box (demerzel) against real subject data end-to-end (AE training → GAN training → sample generation)
-- [ ] 6.2 Spot-check generated samples (shape, no NaNs) and confirm `eval_external_config.py` can ingest the output CSV
+- [x] 6.1 Run `./train_eeggan_vanilla.sh 1 full` on the GPU box (demerzel) against real subject data end-to-end (AE training → GAN training → sample generation)
+- [x] 6.2 Spot-check generated samples (shape, no NaNs) and confirm `eval_external_config.py` can ingest the output CSV
