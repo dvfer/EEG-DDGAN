@@ -39,9 +39,6 @@ TEST_DATA_DIR = 'subject_data/test'   # held-out, nunca visto en entrenamiento (
 TEST_SIZE     = 0.2                    # fracción de trials para el held-out set
 GAN_DIR  = 'trained_models'
 
-# Prefijo para los archivos de modelo
-MODEL_PREFIX = 'GAN_009_Modded'
-
 # ── GAN ─────────────────────────────────────────────────────
 GAN_PATCH_SIZE = 10
 GAN_N_EPOCHS   = 2000
@@ -49,9 +46,18 @@ GAN_SEED       = 42
 GAN_USE_DWT    = True   # usar MultiscaleDWTDiscriminator
 GAN_HIGH_FREQ  = True   # incluir coeficientes de alta frecuencia en DWT
 GAN_DWT_J      = 4      # niveles de descomposición DWT (techo ~log2(seq_len))
-GAN_LAMBDA_FM  = 20     # peso de la feature-matching loss
-GAN_USE_POSTNET = False # smoothing residual de costuras de patch en el generador
-GAN_USE_STACKING = True # combinar D1 (TTS) + D2 (DWT) vía StackingDiscriminator
+GAN_LAMBDA_FM  = 50     # peso de la feature-matching loss (50: mejores resultados en ablation)
+GAN_USE_POSTNET = True  # smoothing residual de costuras de patch en el generador
+GAN_USE_STACKING = False # combinar D1 (TTS) + D2 (DWT) vía StackingDiscriminator
+
+# Prefijo para los archivos de modelo -- codifica los hiperparámetros que más
+# solemos variar entre corridas, para no pisar/confundir checkpoints de config
+# distinta (mismo motivo que el nombre por target en train_eeggan_vanilla.sh).
+MODEL_PREFIX = (
+    f'GAN_009_fm{GAN_LAMBDA_FM}'
+    f'_postnet{int(GAN_USE_POSTNET)}'
+    f'_stack{int(GAN_USE_STACKING)}'
+)
 
 # ────────────────────────────────────────────────────────────
 
