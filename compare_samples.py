@@ -26,13 +26,13 @@ import seaborn as sns
 from eeg_metrics import compute_psd, spectral_jsd, mmd_rbf, erp_peak_metrics
 from eeggan.helpers.dataloader import Dataloader
 from eeggan.helpers.visualize_pca import visualization_dim_reduction
+from moabb_pipeline import MODEL_PREFIX  # single source of truth (fm/postnet/stack en el nombre)
 
 DATA_DIR      = 'subject_data/train'    # usado para entrenar (y como fallback si no hay test)
 TEST_DATA_DIR = 'subject_data/test'     # held-out — lo que se usa como "real" para las métricas
 GAN_DIR   = 'trained_models'
 GEN_DIR   = 'generated_samples'
 PLOT_DIR  = 'comparison_plots'
-MODEL_PREFIX = 'GAN_009_Modded'
 
 CONDITIONS = {'NonTarget': 0, 'Target': 1}
 MAX_SAMPLES_PER_COND = 200  # cap para no generar batches gigantes
