@@ -36,7 +36,7 @@ for s in "${SUBJECTS[@]}"; do
         continue
     fi
     echo "=== Sujeto $s: entrenando (log en ${LOG_DIR}/subject_${s}.log) ==="
-    if python moabb_pipeline.py --subjects "$s" 2>&1 | tee "${LOG_DIR}/subject_${s}.log"; then
+    if uv run python moabb_pipeline.py --subjects "$s" 2>&1 | tee "${LOG_DIR}/subject_${s}.log"; then
         echo "=== Sujeto $s: OK ==="
     else
         echo "=== Sujeto $s: FALLÓ, ver ${LOG_DIR}/subject_${s}.log ===" >&2
