@@ -46,6 +46,25 @@ for s in "${SUBJECTS[@]}"; do
     fi
 done
 
+SUMMARY_CSV="ablation_results/metrics_${CONFIG_NAME}.csv"
+uv run python -c "
+import glob, pandas as pd
+rows = []
+for f in glob.glob('ablation_results/ablation_s*.csv'):
+    df = pd.read_csv(f)
+    row = df[df['config'] == '${CONFIG_NAME}']
+    if not row.empty:
+        subject = int(f.split('_s')[-1].split('.')[0])
+        rows.append({'subject': subject, **row.iloc[0].drop('config').to_dict()})
+if rows:
+    out = pd.DataFrame(rows).sort_values('subject')
+    out.to_csv('${SUMMARY_CSV}', index=False)
+    print(f'\nTabla combinada -> ${SUMMARY_CSV}')
+    print(out.to_string(index=False))
+else:
+    print('Ningún sujeto tiene fila ${CONFIG_NAME} en ablation_results/.')
+"
+
 if [[ ${#FAILED[@]} -gt 0 ]]; then
     echo "" >&2
     echo "Sujetos fallidos: ${FAILED[*]}" >&2
