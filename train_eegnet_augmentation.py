@@ -136,7 +136,8 @@ def train_and_eval(X_train, y_train, X_test, y_test, device):
     preds = (probs >= 0.5).astype(int)
     return {
         'accuracy': accuracy_score(y_test, preds),
-        'f1': f1_score(y_test, preds, zero_division=0),
+        'f1': f1_score(y_test, preds, zero_division=0),  # binario, clase Target -- la métrica de interés acá
+        'f1_macro': f1_score(y_test, preds, average='macro', zero_division=0),  # (F1_Target+F1_NonTarget)/2, referencia
         'auc': roc_auc_score(y_test, probs) if len(np.unique(y_test)) > 1 else float('nan'),
     }
 
