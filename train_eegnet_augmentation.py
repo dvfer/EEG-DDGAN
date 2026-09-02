@@ -11,8 +11,9 @@ CSV de train (dataloader.py). Para que cada pool sintético y los reales
 compare_samples.py: train_norm_stats()+load() (evita repetir ese bug ya
 arreglado ahí -- ver S1478 en memoria del proyecto).
 
-ratio r: n_aug = round(r * n_trials_train), tomados de un pool sintético por
-sujeto (con reemplazo si el pool no alcanza):
+ratio r: n_aug = round(r * n_trials_TARGET_train) -- solo se aumenta la clase
+Target (minoritaria en P300; NonTarget no se toca), tomados de un pool
+sintético por sujeto (con reemplazo si el pool no alcanza):
   - tts_gan_baseline / GAN_009_fm50_postnet1_stack0 (DDGAN): esta misma rama
     (ttsgan-direct) -- el pool se genera acá mismo, in-process, si no existe.
   - eeg_gan_vanilla_full: checkpoint AE-coupled de la rama `main` -- esta rama
@@ -95,9 +96,12 @@ def to_eegnet_input(X):
     return torch.tensor(X, dtype=torch.float32).permute(0, 2, 1).unsqueeze(1)
 
 
-def sample_pool(X_pool, y_pool, n, rng):
-    replace = n > len(y_pool)
-    idx = rng.choice(len(y_pool), size=n, replace=replace)
+def sample_pool(X_pool, y_pool, n, rng, target_class=1):
+    """Samplea SOLO de la clase target -- el aumento busca compensar el
+    desbalance P300 (Target << NonTarget), no inflar ambas clases por igual."""
+    pool_idx = np.flatnonzero(y_pool == target_class)
+    replace = n > len(pool_idx)
+    idx = rng.choice(pool_idx, size=n, replace=replace)
     return X_pool[idx], y_pool[idx]
 
 
@@ -181,6 +185,8 @@ def run_subject(subject, device):
     print(f'    -> {metrics}')
     rows.append({'config': 'none', 'subject': subject, 'ratio': 0.0, 'n_aug': 0, **metrics})
 
+    n_train_target = int((y_train == 1).sum())  # el ratio de aumento es sobre la clase Target, no sobre el total
+
     rng = np.random.default_rng(SEED)
     for config_name in CONFIGS:
         print(f'  config={config_name}')
@@ -190,7 +196,7 @@ def run_subject(subject, device):
             print(f'    Aviso: se omite ({exc}).')
             continue
         for ratio in RATIOS:
-            n_aug = round(ratio * len(y_train))
+            n_aug = round(ratio * n_train_target)
             X_aug, y_aug = sample_pool(X_pool, y_pool, n_aug, rng)
             X_tr = np.concatenate([X_train, X_aug])
             y_tr = np.concatenate([y_train, y_aug])
