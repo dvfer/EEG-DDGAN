@@ -11,6 +11,13 @@ CSV de train (dataloader.py). Para que cada pool sintético y los reales
 compare_samples.py: train_norm_stats()+load() (evita repetir ese bug ya
 arreglado ahí -- ver S1478 en memoria del proyecto).
 
+Cada (config, sujeto, ratio) se corre N_REPEATS veces (seed distinta cada vez
+-- init del modelo + shuffling + qué trials sintéticos se samplean del pool) y
+se reporta media ± std sobre esas repeticiones: mide qué tan CONSISTENTE es el
+resultado de entrenar con esa config, no la variabilidad entre sujetos (esa ya
+se ve directo comparando filas de sujetos distintos, sin necesidad de repetir
+nada -- ver plot_eegnet_per_subject.py).
+
 ratio r: n_aug = round(r * n_trials_TARGET_train) -- solo se aumenta la clase
 Target (minoritaria en P300; NonTarget no se toca), tomados de un pool
 sintético por sujeto (con reemplazo si el pool no alcanza):
@@ -42,6 +49,7 @@ RATIOS = [0.1, 0.2, 0.3, 0.4, 0.5]
 N_EPOCHS = 60
 BATCH_SIZE = 32
 SEED = 42
+N_REPEATS = 100  # repeticiones por (config, sujeto, ratio) -- mide consistencia, no varianza entre sujetos
 RESULTS_CSV = 'ablation_results/eegnet_augmentation.csv'
 
 # name -> checkpoint (None si el pool se genera aparte, fuera de esta rama)
@@ -105,9 +113,9 @@ def sample_pool(X_pool, y_pool, n, rng, target_class=1):
     return X_pool[idx], y_pool[idx]
 
 
-def train_and_eval(X_train, y_train, X_test, y_test, device):
+def train_and_eval(X_train, y_train, X_test, y_test, device, seed):
     n_channels, n_times = X_train.shape[-1], X_train.shape[1]
-    torch.manual_seed(SEED)
+    torch.manual_seed(seed)
     model = EEGNet(n_channels, n_times).to(device)
 
     x_tr = to_eegnet_input(X_train).to(device)
@@ -120,7 +128,7 @@ def train_and_eval(X_train, y_train, X_test, y_test, device):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     model.train()
-    perm_rng = np.random.default_rng(SEED)
+    perm_rng = np.random.default_rng(seed)
     for _ in range(N_EPOCHS):
         idx = perm_rng.permutation(len(y_tr))
         for start in range(0, len(idx), BATCH_SIZE):
@@ -140,6 +148,30 @@ def train_and_eval(X_train, y_train, X_test, y_test, device):
         'f1_macro': f1_score(y_test, preds, average='macro', zero_division=0),  # (F1_Target+F1_NonTarget)/2, referencia
         'auc': roc_auc_score(y_test, probs) if len(np.unique(y_test)) > 1 else float('nan'),
     }
+
+
+def repeat_train_eval(X_train, y_train, X_test, y_test, device, X_pool=None, y_pool=None, n_aug=0):
+    """Corre train_and_eval() N_REPEATS veces (seed = SEED+r cada vez, tanto
+    para el sampleo del pool como para el entrenamiento) y agrega media/std."""
+    runs = []
+    for r in range(N_REPEATS):
+        seed = SEED + r
+        if n_aug:
+            rng = np.random.default_rng(seed)
+            X_aug, y_aug = sample_pool(X_pool, y_pool, n_aug, rng)
+            X_tr = np.concatenate([X_train, X_aug])
+            y_tr = np.concatenate([y_train, y_aug])
+        else:
+            X_tr, y_tr = X_train, y_train
+        runs.append(train_and_eval(X_tr, y_tr, X_test, y_test, device, seed=seed))
+
+    runs_df = pd.DataFrame(runs)
+    agg = {}
+    for col in runs_df.columns:
+        agg[f'{col}_mean'] = runs_df[col].mean()
+        agg[f'{col}_std'] = runs_df[col].std()
+    agg['n_repeats'] = N_REPEATS
+    return agg
 
 
 def get_pool(config_name, subject, train_csv):
@@ -181,14 +213,13 @@ def run_subject(subject, device):
     X_test, y_test = load(test_csv, norm_data=True, norm_min=norm_min, norm_max=norm_max)
 
     rows = []
-    print('  ratio=0.0 (baseline, sin aumento -- compartido entre configs)')
-    metrics = train_and_eval(X_train, y_train, X_test, y_test, device)
+    print(f'  ratio=0.0 (baseline, sin aumento -- compartido entre configs, {N_REPEATS} corridas)')
+    metrics = repeat_train_eval(X_train, y_train, X_test, y_test, device)
     print(f'    -> {metrics}')
     rows.append({'config': 'none', 'subject': subject, 'ratio': 0.0, 'n_aug': 0, **metrics})
 
     n_train_target = int((y_train == 1).sum())  # el ratio de aumento es sobre la clase Target, no sobre el total
 
-    rng = np.random.default_rng(SEED)
     for config_name in CONFIGS:
         print(f'  config={config_name}')
         try:
@@ -198,11 +229,8 @@ def run_subject(subject, device):
             continue
         for ratio in RATIOS:
             n_aug = round(ratio * n_train_target)
-            X_aug, y_aug = sample_pool(X_pool, y_pool, n_aug, rng)
-            X_tr = np.concatenate([X_train, X_aug])
-            y_tr = np.concatenate([y_train, y_aug])
-            metrics = train_and_eval(X_tr, y_tr, X_test, y_test, device)
-            print(f'    ratio={ratio}: n_aug={n_aug} -> {metrics}')
+            metrics = repeat_train_eval(X_train, y_train, X_test, y_test, device, X_pool, y_pool, n_aug)
+            print(f'    ratio={ratio}: n_aug={n_aug} ({N_REPEATS} corridas) -> {metrics}')
             rows.append({'config': config_name, 'subject': subject, 'ratio': ratio, 'n_aug': n_aug, **metrics})
     return rows
 
@@ -212,6 +240,12 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     subjects = [int(s) for s in sys.argv[1:]] or list(range(1, 11))
     os.makedirs('ablation_results', exist_ok=True)
+
+    n_runs = len(subjects) * N_REPEATS * (1 + len(CONFIGS) * len(RATIOS))
+    print(f'Total de entrenamientos planeados: ~{n_runs} '
+          f'({len(subjects)} sujetos x {N_REPEATS} repeticiones x '
+          f'(1 baseline + {len(CONFIGS)} configs x {len(RATIOS)} ratios)) -- '
+          f'esto tarda, correlo detached (screen).')
 
     rows = []
     if os.path.exists(RESULTS_CSV):
